@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .db import db, init_db, seed
+from .db import db, init_db, seed, DATABASE_URL
 from .llm import analyze, answer_question
 from .stt import transcribe
 from .exporter import docx_bytes, pdf_bytes
@@ -13,16 +13,23 @@ from .exporter import docx_bytes, pdf_bytes
 
 app = FastAPI(title="Meeting Memo Expander Level 3")
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://meeting-memo-expander.vercel.app",
+],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# PostgreSQL uses %s
+# SQLite uses ?
+PLACEHOLDER = "%s" if DATABASE_URL else "?"
 
 
 @app.on_event("startup")
@@ -78,13 +85,36 @@ def projects():
 @app.post("/api/projects")
 def create_project(x: ProjectIn):
     with db() as con:
-        cur = con.execute(
-            "INSERT INTO projects(name,description) VALUES (?,?)",
-            (x.name, x.description)
-        )
+
+        if DATABASE_URL:
+            cur = con.execute(
+                """
+                INSERT INTO projects(
+                    name,
+                    description
+                )
+                VALUES (%s, %s)
+                RETURNING id
+                """,
+                (x.name, x.description)
+            )
+            project_id = cur.fetchone()["id"]
+
+        else:
+            cur = con.execute(
+                """
+                INSERT INTO projects(
+                    name,
+                    description
+                )
+                VALUES (?, ?)
+                """,
+                (x.name, x.description)
+            )
+            project_id = cur.lastrowid
 
         return {
-            "id": cur.lastrowid,
+            "id": project_id,
             "name": x.name
         }
 
@@ -99,7 +129,12 @@ def meetings(project_id: int | None = None):
 
         if project_id:
             rows = con.execute(
-                "SELECT * FROM meetings WHERE project_id=? ORDER BY id DESC",
+                f"""
+                SELECT *
+                FROM meetings
+                WHERE project_id={PLACEHOLDER}
+                ORDER BY id DESC
+                """,
                 (project_id,)
             )
         else:
@@ -113,9 +148,15 @@ def meetings(project_id: int | None = None):
 @app.delete("/api/meetings/{mid}")
 def delete_meeting(mid: int):
     """Delete one meeting and all tasks/decisions belonging to it."""
+
     with db() as con:
+
         row = con.execute(
-            "SELECT id FROM meetings WHERE id=?",
+            f"""
+            SELECT id
+            FROM meetings
+            WHERE id={PLACEHOLDER}
+            """,
             (mid,)
         ).fetchone()
 
@@ -125,11 +166,25 @@ def delete_meeting(mid: int):
                 detail="Meeting not found"
             )
 
-        con.execute("DELETE FROM tasks WHERE meeting_id=?", (mid,))
-        con.execute("DELETE FROM decisions WHERE meeting_id=?", (mid,))
-        con.execute("DELETE FROM meetings WHERE id=?", (mid,))
+        con.execute(
+            f"DELETE FROM tasks WHERE meeting_id={PLACEHOLDER}",
+            (mid,)
+        )
 
-    return {"ok": True, "deleted_meeting_id": mid}
+        con.execute(
+            f"DELETE FROM decisions WHERE meeting_id={PLACEHOLDER}",
+            (mid,)
+        )
+
+        con.execute(
+            f"DELETE FROM meetings WHERE id={PLACEHOLDER}",
+            (mid,)
+        )
+
+    return {
+        "ok": True,
+        "deleted_meeting_id": mid
+    }
 
 
 @app.get("/api/meetings/{mid}")
@@ -137,7 +192,11 @@ def meeting(mid: int):
     with db() as con:
 
         row = con.execute(
-            "SELECT * FROM meetings WHERE id=?",
+            f"""
+            SELECT *
+            FROM meetings
+            WHERE id={PLACEHOLDER}
+            """,
             (mid,)
         ).fetchone()
 
@@ -152,8 +211,10 @@ def meeting(mid: int):
 
 @app.post("/api/meetings")
 async def create_meeting(x: MeetingIn):
+
     try:
         analysis = await analyze(x.transcript)
+
     except RuntimeError as e:
         raise HTTPException(
             status_code=429,
@@ -162,26 +223,54 @@ async def create_meeting(x: MeetingIn):
 
     with db() as con:
 
-        # Save meeting
-        cur = con.execute(
-            """
-            INSERT INTO meetings(
-                project_id,
-                title,
-                transcript,
-                analysis_json
-            )
-            VALUES (?,?,?,?)
-            """,
-            (
-                x.project_id,
-                x.title,
-                x.transcript,
-                json.dumps(analysis)
-            )
-        )
+        # -------------------------------------------------
+        # Save Meeting
+        # -------------------------------------------------
 
-        mid = cur.lastrowid
+        if DATABASE_URL:
+
+            cur = con.execute(
+                """
+                INSERT INTO meetings(
+                    project_id,
+                    title,
+                    transcript,
+                    analysis_json
+                )
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    x.project_id,
+                    x.title,
+                    x.transcript,
+                    json.dumps(analysis)
+                )
+            )
+
+            mid = cur.fetchone()["id"]
+
+        else:
+
+            cur = con.execute(
+                """
+                INSERT INTO meetings(
+                    project_id,
+                    title,
+                    transcript,
+                    analysis_json
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    x.project_id,
+                    x.title,
+                    x.transcript,
+                    json.dumps(analysis)
+                )
+            )
+
+            mid = cur.lastrowid
 
         # -------------------------------------------------
         # Save Action Items
@@ -199,14 +288,14 @@ async def create_meeting(x: MeetingIn):
                 deadline = ""
 
             con.execute(
-                """
+                f"""
                 INSERT INTO tasks(
                     meeting_id,
                     title,
                     owner,
                     deadline
                 )
-                VALUES (?,?,?,?)
+                VALUES ({PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER})
                 """,
                 (
                     mid,
@@ -230,13 +319,13 @@ async def create_meeting(x: MeetingIn):
                 context = ""
 
             con.execute(
-                """
+                f"""
                 INSERT INTO decisions(
                     meeting_id,
                     decision,
                     context
                 )
-                VALUES (?,?,?)
+                VALUES ({PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER})
                 """,
                 (
                     mid,
@@ -307,7 +396,11 @@ def update_task(
     with db() as con:
 
         con.execute(
-            "UPDATE tasks SET status=? WHERE id=?",
+            f"""
+            UPDATE tasks
+            SET status={PLACEHOLDER}
+            WHERE id={PLACEHOLDER}
+            """,
             (status, tid)
         )
 
@@ -355,14 +448,14 @@ def search(q: str):
         meetings_result = [
             dict(x)
             for x in con.execute(
-                """
+                f"""
                 SELECT
                     id,
                     title,
                     created_at
                 FROM meetings
-                WHERE title LIKE ?
-                   OR transcript LIKE ?
+                WHERE title LIKE {PLACEHOLDER}
+                   OR transcript LIKE {PLACEHOLDER}
                 ORDER BY id DESC
                 """,
                 (like, like)
@@ -372,15 +465,15 @@ def search(q: str):
         tasks_result = [
             dict(x)
             for x in con.execute(
-                """
+                f"""
                 SELECT
                     id,
                     title,
                     owner,
                     status
                 FROM tasks
-                WHERE title LIKE ?
-                   OR owner LIKE ?
+                WHERE title LIKE {PLACEHOLDER}
+                   OR owner LIKE {PLACEHOLDER}
                 ORDER BY id DESC
                 """,
                 (like, like)
@@ -406,7 +499,11 @@ async def ask(
     with db() as con:
 
         row = con.execute(
-            "SELECT transcript FROM meetings WHERE id=?",
+            f"""
+            SELECT transcript
+            FROM meetings
+            WHERE id={PLACEHOLDER}
+            """,
             (mid,)
         ).fetchone()
 
@@ -417,13 +514,19 @@ async def ask(
         )
 
     try:
+
         answer = await answer_question(
             x.question,
             row["transcript"],
             x.history
         )
-        return {"answer": answer}
+
+        return {
+            "answer": answer
+        }
+
     except RuntimeError as e:
+
         raise HTTPException(
             status_code=429,
             detail=str(e)
@@ -443,12 +546,12 @@ def export(
     with db() as con:
 
         row = con.execute(
-            """
+            f"""
             SELECT
                 title,
                 analysis_json
             FROM meetings
-            WHERE id=?
+            WHERE id={PLACEHOLDER}
             """,
             (mid,)
         ).fetchone()
@@ -463,7 +566,10 @@ def export(
         row["analysis_json"] or "{}"
     )
 
-    # DOCX export
+    # -----------------------------------------------------
+    # DOCX
+    # -----------------------------------------------------
+
     if kind == "docx":
 
         data = docx_bytes(
@@ -483,7 +589,10 @@ def export(
             }
         )
 
-    # PDF export
+    # -----------------------------------------------------
+    # PDF
+    # -----------------------------------------------------
+
     if kind == "pdf":
 
         data = pdf_bytes(
