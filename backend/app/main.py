@@ -1,4 +1,5 @@
 import json
+import os
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +11,7 @@ from .llm import analyze, answer_question
 from .stt import transcribe
 from .exporter import docx_bytes, pdf_bytes
 
-
+DATABASE_URL = os.getenv("DATABASE_URL")
 app = FastAPI(title="Meeting Memo Expander Level 3")
 
 
