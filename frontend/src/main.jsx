@@ -18,7 +18,7 @@ import "./styles.css";
 
 const API =
   import.meta.env.VITE_API_URL ||
-  "http://localhost:8000/api";
+  "https://meeting-memo-backend-v2.onrender.com/api";
 
 
 // ======================================================
@@ -144,46 +144,80 @@ function App() {
 
   async function load() {
 
-    try {
+  try {
 
-      setError("");
+    setError("");
 
-      const projectsData =
-        await api("/projects");
+    const projectsData =
+      await api("/projects");
 
-      setProjects(projectsData);
+    setProjects(projectsData);
 
-      const firstProject =
-        projectsData[0];
+    const firstProject =
+      projectsData[0];
 
-      setProject(firstProject);
+    setProject(firstProject);
 
-      if (firstProject) {
+    if (!firstProject) {
 
-        const meetingData =
-          await api(
-            "/meetings?project_id=" +
-            firstProject.id
-          );
+      setMeetings([]);
+      setTasks([]);
+      setDecisions([]);
 
-        setMeetings(meetingData);
-      }
-
-      const tasksData =
-        await api("/tasks");
-
-      setTasks(tasksData);
-
-      const decisionsData =
-        await api("/decisions");
-
-      setDecisions(decisionsData);
-
-    } catch (e) {
-
-      setError(e.message);
+      return;
     }
+
+    const meetingData =
+      await api(
+        "/meetings?project_id=" +
+        firstProject.id
+      );
+
+    setMeetings(meetingData);
+
+
+    // ==================================================
+    // LOAD TASKS AND DECISIONS FOR ALL MEETINGS
+    // ==================================================
+
+    const taskResults =
+      await Promise.all(
+        meetingData.map(
+          meeting =>
+            api(
+              `/meetings/${meeting.id}/tasks`
+            )
+        )
+      );
+
+    const decisionResults =
+      await Promise.all(
+        meetingData.map(
+          meeting =>
+            api(
+              `/meetings/${meeting.id}/decisions`
+            )
+        )
+      );
+
+
+    // Flatten all meeting results
+    const allTasks =
+      taskResults.flat();
+
+    const allDecisions =
+      decisionResults.flat();
+
+
+    setTasks(allTasks);
+    setDecisions(allDecisions);
+
+  } catch (e) {
+
+    setError(e.message);
+
   }
+}
 
 
   useEffect(() => {
@@ -199,7 +233,6 @@ function App() {
 
   async function selectMeeting(id) {
 
-    // Stop any active voice conversation
     stopVoiceConversation();
 
     try {
@@ -207,6 +240,8 @@ function App() {
       setError("");
 
       setConversation([]);
+
+      conversationRef.current = [];
 
       const meeting =
         await api(
@@ -322,32 +357,52 @@ function App() {
   async function deleteMeeting(id) {
 
     const meeting =
-      meetings.find(item => item.id === id);
+      meetings.find(
+        item => item.id === id
+      );
 
-    const confirmed = window.confirm(
-      `Delete "${meeting?.title || "this meeting"}"?\n\nThis will also delete its tasks and decisions.`
-    );
+    const confirmed =
+      window.confirm(
+        `Delete "${meeting?.title || "this meeting"}"?\n\nThis will also delete its tasks and decisions.`
+      );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     try {
+
       setError("");
+
       stopVoiceConversation();
 
-      await api(`/meetings/${id}`, {
-        method: "DELETE"
-      });
+      await api(
+        `/meetings/${id}`,
+        {
+          method: "DELETE"
+        }
+      );
 
-      if (selected?.id === id) {
+      // If the deleted meeting is currently open,
+      // close it.
+      if (
+        selected?.id === id
+      ) {
+
         setSelected(null);
+
         setConversation([]);
+
         conversationRef.current = [];
       }
 
+      // Reload meetings, tasks and decisions.
       await load();
 
       setView("meetings");
+
     } catch (e) {
+
       setError(e.message);
     }
   }
@@ -457,9 +512,13 @@ function App() {
     if (recognitionRef.current) {
 
       try {
+
         recognitionRef.current.onend = null;
+
         recognitionRef.current.onerror = null;
+
         recognitionRef.current.stop();
+
       } catch {
         // Already stopped.
       }
@@ -474,56 +533,85 @@ function App() {
   // ====================================================
 
   function normalizeSpeech(text) {
+
     return (text || "")
       .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .replace(/\s+/g, " ")
+      .replace(
+        /[^a-z0-9\s]/g,
+        " "
+      )
+      .replace(
+        /\s+/g,
+        " "
+      )
       .trim();
   }
 
 
   // ====================================================
-  // CHECK WHETHER RECOGNIZED SPEECH IS THE AI'S VOICE
+  // CHECK WHETHER RECOGNIZED SPEECH IS AI VOICE
   // ====================================================
 
   function looksLikeCurrentAIAnswer(text) {
 
-    const heard = normalizeSpeech(text);
-    const answer = normalizeSpeech(
-      currentAIAnswerRef.current
-    );
+    const heard =
+      normalizeSpeech(text);
+
+    const answer =
+      normalizeSpeech(
+        currentAIAnswerRef.current
+      );
 
     if (!heard || !answer) {
       return false;
     }
 
-    // If the browser recognized a substantial phrase from
-    // the AI's own answer, ignore it instead of treating it
-    // as the user's interruption.
-    if (answer.includes(heard) && heard.length >= 12) {
+    if (
+      answer.includes(heard) &&
+      heard.length >= 12
+    ) {
       return true;
     }
 
-    if (heard.includes(answer) && answer.length >= 12) {
+    if (
+      heard.includes(answer) &&
+      answer.length >= 12
+    ) {
       return true;
     }
 
-    const heardWords = heard.split(" ");
-    const answerWords = answer.split(" ");
+    const heardWords =
+      heard.split(" ");
 
-    if (heardWords.length < 4 || answerWords.length < 4) {
+    const answerWords =
+      answer.split(" ");
+
+    if (
+      heardWords.length < 4 ||
+      answerWords.length < 4
+    ) {
       return false;
     }
 
     let matching = 0;
 
-    for (const word of heardWords) {
-      if (answerWords.includes(word)) {
+    for (
+      const word of heardWords
+    ) {
+
+      if (
+        answerWords.includes(word)
+      ) {
+
         matching += 1;
       }
     }
 
-    return matching / heardWords.length >= 0.75;
+    return (
+      matching /
+      heardWords.length >=
+      0.75
+    );
   }
 
 
@@ -533,54 +621,96 @@ function App() {
 
   function cancelAISpeech() {
 
-    if (window.speechSynthesis) {
+    if (
+      window.speechSynthesis
+    ) {
+
       window.speechSynthesis.cancel();
     }
 
-    speakingRef.current = false;
-    currentAIAnswerRef.current = "";
+    speakingRef.current =
+      false;
+
+    currentAIAnswerRef.current =
+      "";
   }
 
 
   function speakAIAnswer(text) {
 
-    return new Promise(resolve => {
+    return new Promise(
+      resolve => {
 
-      if (!window.speechSynthesis) {
-        speakingRef.current = false;
-        resolve();
-        return;
+        if (
+          !window.speechSynthesis
+        ) {
+
+          speakingRef.current =
+            false;
+
+          resolve();
+
+          return;
+        }
+
+        speakingRef.current =
+          true;
+
+        currentAIAnswerRef.current =
+          text;
+
+        setVoiceStatus(
+          "speaking"
+        );
+
+        window.speechSynthesis.cancel();
+
+        const utterance =
+          new SpeechSynthesisUtterance(
+            text
+          );
+
+        utterance.lang =
+          "en-IN";
+
+        utterance.rate =
+          1;
+
+        utterance.pitch =
+          1;
+
+        utterance.volume =
+          1;
+
+        utterance.onend =
+          () => {
+
+            speakingRef.current =
+              false;
+
+            currentAIAnswerRef.current =
+              "";
+
+            resolve();
+          };
+
+        utterance.onerror =
+          () => {
+
+            speakingRef.current =
+              false;
+
+            currentAIAnswerRef.current =
+              "";
+
+            resolve();
+          };
+
+        window.speechSynthesis.speak(
+          utterance
+        );
       }
-
-      speakingRef.current = true;
-      currentAIAnswerRef.current = text;
-
-      setVoiceStatus("speaking");
-
-      window.speechSynthesis.cancel();
-
-      const utterance =
-        new SpeechSynthesisUtterance(text);
-
-      utterance.lang = "en-IN";
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      utterance.volume = 1;
-
-      utterance.onend = () => {
-        speakingRef.current = false;
-        currentAIAnswerRef.current = "";
-        resolve();
-      };
-
-      utterance.onerror = () => {
-        speakingRef.current = false;
-        currentAIAnswerRef.current = "";
-        resolve();
-      };
-
-      window.speechSynthesis.speak(utterance);
-    });
+    );
   }
 
 
@@ -588,99 +718,141 @@ function App() {
   // SEND QUESTION TO GEMINI
   // ====================================================
 
-  async function sendVoiceQuestion(question) {
+  async function sendVoiceQuestion(
+    question
+  ) {
 
     if (
       !selected ||
       !question.trim() ||
       processingRef.current
     ) {
+
       return;
     }
 
-    processingRef.current = true;
+    processingRef.current =
+      true;
+
     stopRecognition();
+
     cancelAISpeech();
 
-    const cleanQuestion = question.trim();
+    const cleanQuestion =
+      question.trim();
 
     try {
 
-      setVoiceStatus("thinking");
+      setVoiceStatus(
+        "thinking"
+      );
 
       const history =
         conversationRef.current
           .slice(-8)
-          .map(message => ({
-            role: message.role,
-            text: message.text
-          }));
+          .map(
+            message => ({
+              role:
+                message.role,
 
-      setConversation(previous => {
-        const next = [
-          ...previous,
-          {
-            role: "user",
-            text: cleanQuestion
-          }
-        ];
+              text:
+                message.text
+            })
+          );
 
-        conversationRef.current = next;
-        return next;
-      });
+      setConversation(
+        previous => {
 
-      const data = await api(
-        `/meetings/${selected.id}/ask`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            question: cleanQuestion,
-            history
-          })
+          const next = [
+            ...previous,
+            {
+              role: "user",
+              text: cleanQuestion
+            }
+          ];
+
+          conversationRef.current =
+            next;
+
+          return next;
         }
       );
+
+      const data =
+        await api(
+          `/meetings/${selected.id}/ask`,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+
+            body:
+              JSON.stringify({
+                question:
+                  cleanQuestion,
+
+                history
+              })
+          }
+        );
 
       const answer =
         data.answer?.answer ||
         data.answer ||
         "I could not find an answer in this meeting.";
 
-      setConversation(previous => {
-        const next = [
-          ...previous,
-          {
-            role: "ai",
-            text: answer
-          }
-        ];
+      setConversation(
+        previous => {
 
-        conversationRef.current = next;
-        return next;
-      });
+          const next = [
+            ...previous,
+            {
+              role: "ai",
+              text: answer
+            }
+          ];
 
-      // The recognition loop is deliberately started again
-      // while the AI is speaking. This allows the user to
-      // interrupt naturally instead of waiting for the answer.
+          conversationRef.current =
+            next;
+
+          return next;
+        }
+      );
+
       startListening();
 
-      await speakAIAnswer(answer);
+      await speakAIAnswer(
+        answer
+      );
 
     } catch (e) {
 
-      setError(e.message);
-      setVoiceStatus("error");
-      shouldContinueListening.current = false;
+      setError(
+        e.message
+      );
+
+      setVoiceStatus(
+        "error"
+      );
+
+      shouldContinueListening.current =
+        false;
 
     } finally {
 
-      processingRef.current = false;
+      processingRef.current =
+        false;
 
-      currentAIAnswerRef.current = "";
+      currentAIAnswerRef.current =
+        "";
 
-      if (shouldContinueListening.current) {
+      if (
+        shouldContinueListening.current
+      ) {
+
         startListening();
       }
     }
@@ -693,7 +865,10 @@ function App() {
 
   function startListening() {
 
-    if (!shouldContinueListening.current) {
+    if (
+      !shouldContinueListening.current
+    ) {
+
       return;
     }
 
@@ -706,149 +881,252 @@ function App() {
         "Live voice recognition is not supported in this browser. Please use Google Chrome."
       );
 
-      shouldContinueListening.current = false;
-      setVoiceActive(false);
+      shouldContinueListening.current =
+        false;
+
+      setVoiceActive(
+        false
+      );
+
       return;
     }
 
-    if (recognitionRef.current || restartingRecognitionRef.current) {
+    if (
+      recognitionRef.current ||
+      restartingRecognitionRef.current
+    ) {
+
       return;
     }
 
     const recognition =
       new SpeechRecognition();
 
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-IN";
-    recognition.maxAlternatives = 1;
+    recognition.continuous =
+      true;
 
-    recognition.onstart = () => {
-      setVoiceActive(true);
+    recognition.interimResults =
+      true;
 
-      if (!speakingRef.current && !processingRef.current) {
-        setVoiceStatus("listening");
-      }
-    };
+    recognition.lang =
+      "en-IN";
 
-    recognition.onresult = event => {
+    recognition.maxAlternatives =
+      1;
 
-      let finalText = "";
-      let interimText = "";
+    recognition.onstart =
+      () => {
 
-      for (
-        let i = event.resultIndex;
-        i < event.results.length;
-        i += 1
-      ) {
-
-        const text =
-          event.results[i][0]?.transcript || "";
-
-        if (event.results[i].isFinal) {
-          finalText += " " + text;
-        } else {
-          interimText += " " + text;
-        }
-      }
-
-      finalText = finalText.trim();
-      interimText = interimText.trim();
-
-      // If the user speaks while AI is talking, allow a
-      // natural interruption. The browser may also recognize
-      // the AI's own voice, so we ignore phrases that strongly
-      // match the current answer.
-      if (speakingRef.current) {
-
-        const candidate =
-          finalText || interimText;
+        setVoiceActive(
+          true
+        );
 
         if (
-          candidate &&
-          !looksLikeCurrentAIAnswer(candidate)
+          !speakingRef.current &&
+          !processingRef.current
         ) {
 
-          // Wait for a final utterance before sending it to
-          // Gemini. This avoids sending every interim word.
-          if (finalText) {
-            cancelAISpeech();
-            stopRecognition();
-            sendVoiceQuestion(finalText);
+          setVoiceStatus(
+            "listening"
+          );
+        }
+      };
+
+    recognition.onresult =
+      event => {
+
+        let finalText =
+          "";
+
+        let interimText =
+          "";
+
+        for (
+          let i =
+            event.resultIndex;
+
+          i <
+          event.results.length;
+
+          i += 1
+        ) {
+
+          const text =
+            event.results[i][0]
+              ?.transcript ||
+            "";
+
+          if (
+            event.results[i]
+              .isFinal
+          ) {
+
+            finalText +=
+              " " + text;
+
+          } else {
+
+            interimText +=
+              " " + text;
           }
         }
 
-        return;
-      }
+        finalText =
+          finalText.trim();
 
-      // While Gemini is thinking, do not start another request.
-      if (processingRef.current) {
-        return;
-      }
+        interimText =
+          interimText.trim();
 
-      if (finalText) {
-        stopRecognition();
-        sendVoiceQuestion(finalText);
-      }
-    };
+        if (
+          speakingRef.current
+        ) {
 
-    recognition.onerror = event => {
+          const candidate =
+            finalText ||
+            interimText;
 
-      console.log(
-        "Speech recognition error:",
-        event.error
-      );
+          if (
+            candidate &&
+            !looksLikeCurrentAIAnswer(
+              candidate
+            )
+          ) {
 
-      if (event.error === "not-allowed") {
+            if (
+              finalText
+            ) {
 
-        setError(
-          "Microphone permission was denied. Please allow microphone access in Chrome."
+              cancelAISpeech();
+
+              stopRecognition();
+
+              sendVoiceQuestion(
+                finalText
+              );
+            }
+          }
+
+          return;
+        }
+
+        if (
+          processingRef.current
+        ) {
+
+          return;
+        }
+
+        if (
+          finalText
+        ) {
+
+          stopRecognition();
+
+          sendVoiceQuestion(
+            finalText
+          );
+        }
+      };
+
+    recognition.onerror =
+      event => {
+
+        console.log(
+          "Speech recognition error:",
+          event.error
         );
 
-        shouldContinueListening.current = false;
-        setVoiceActive(false);
-        setVoiceStatus("error");
-        return;
-      }
+        if (
+          event.error ===
+          "not-allowed"
+        ) {
 
-      if (
-        event.error === "aborted" ||
-        event.error === "no-speech"
-      ) {
-        return;
-      }
+          setError(
+            "Microphone permission was denied. Please allow microphone access in Chrome."
+          );
 
-      if (shouldContinueListening.current) {
-        setTimeout(() => startListening(), 400);
-      }
-    };
+          shouldContinueListening.current =
+            false;
 
-    recognition.onend = () => {
+          setVoiceActive(
+            false
+          );
 
-      if (recognitionRef.current === recognition) {
-        recognitionRef.current = null;
-      }
+          setVoiceStatus(
+            "error"
+          );
 
-      if (
-        shouldContinueListening.current &&
-        !restartingRecognitionRef.current
-      ) {
+          return;
+        }
 
-        restartingRecognitionRef.current = true;
+        if (
+          event.error ===
+            "aborted" ||
+          event.error ===
+            "no-speech"
+        ) {
 
-        setTimeout(() => {
-          restartingRecognitionRef.current = false;
-          startListening();
-        }, 250);
-      }
-    };
+          return;
+        }
 
-    recognitionRef.current = recognition;
+        if (
+          shouldContinueListening.current
+        ) {
+
+          setTimeout(
+            () =>
+              startListening(),
+            400
+          );
+        }
+      };
+
+    recognition.onend =
+      () => {
+
+        if (
+          recognitionRef.current ===
+          recognition
+        ) {
+
+          recognitionRef.current =
+            null;
+        }
+
+        if (
+          shouldContinueListening.current &&
+          !restartingRecognitionRef.current
+        ) {
+
+          restartingRecognitionRef.current =
+            true;
+
+          setTimeout(
+            () => {
+
+              restartingRecognitionRef.current =
+                false;
+
+              startListening();
+
+            },
+            250
+          );
+        }
+      };
+
+    recognitionRef.current =
+      recognition;
 
     try {
+
       recognition.start();
+
     } catch (e) {
-      recognitionRef.current = null;
+
+      recognitionRef.current =
+        null;
+
       console.log(
         "Could not start recognition:",
         e
@@ -885,15 +1163,20 @@ function App() {
 
     setError("");
 
-    processingRef.current = false;
+    processingRef.current =
+      false;
 
     setConversation([]);
-    conversationRef.current = [];
+
+    conversationRef.current =
+      [];
 
     shouldContinueListening.current =
       true;
 
-    setVoiceActive(true);
+    setVoiceActive(
+      true
+    );
 
     setVoiceStatus(
       "listening"
@@ -912,7 +1195,8 @@ function App() {
     shouldContinueListening.current =
       false;
 
-    processingRef.current = false;
+    processingRef.current =
+      false;
 
     stopRecognition();
 
@@ -920,10 +1204,13 @@ function App() {
 
     speakingRef.current =
       false;
+
     processingRef.current =
       false;
 
-    setVoiceActive(false);
+    setVoiceActive(
+      false
+    );
 
     setVoiceStatus(
       "idle"
@@ -950,7 +1237,6 @@ function App() {
 
         window.speechSynthesis.cancel();
       }
-
     };
 
   }, []);
@@ -961,7 +1247,8 @@ function App() {
   // ====================================================
 
   const analysis =
-    selected?.analysis || null;
+    selected?.analysis ||
+    null;
 
 
   // ====================================================
@@ -1447,7 +1734,6 @@ function App() {
                 <div className="stat">
 
                   <b>
-
                     {
                       tasks.filter(
                         task =>
@@ -1455,7 +1741,6 @@ function App() {
                           "Completed"
                       ).length
                     }
-
                   </b>
 
                   <span>
@@ -1506,62 +1791,75 @@ function App() {
               </div>
 
 
-              {meetings.map(
-                meeting => (
+              {meetings.length === 0 ? (
 
-                  <button
-                    className="meetingrow"
-                    key={
-                      meeting.id
-                    }
-                    onClick={() =>
-                      selectMeeting(
+                <p>
+                  No meetings found.
+                </p>
+
+              ) : (
+
+                meetings.map(
+                  meeting => (
+
+                    <div
+                      className="meetingrow"
+                      key={
                         meeting.id
-                      )
-                    }
-                  >
-
-                    <FileText
-                      size={18}
-                    />
-
-                    <span>
-                      {
-                        meeting.title
                       }
-                    </span>
-
-                    <small>
-                      {
-                        new Date(
-                          meeting.created_at
-                        ).toLocaleString()
+                      onClick={() =>
+                        selectMeeting(
+                          meeting.id
+                        )
                       }
-                    </small>
-
-                    <span
-                      className="delete-meeting"
-                      role="button"
-                      tabIndex={0}
-                      onClick={event => {
-                        event.stopPropagation();
-                        deleteMeeting(meeting.id);
-                      }}
-                      onKeyDown={event => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          deleteMeeting(meeting.id);
-                        }
-                      }}
-                      title="Delete meeting"
                     >
-                      Delete
-                    </span>
 
-                  </button>
+                      <FileText
+                        size={18}
+                      />
 
+                      <span>
+                        {
+                          meeting.title
+                        }
+                      </span>
+
+                      <small>
+                        {
+                          new Date(
+                            meeting.created_at
+                          ).toLocaleString()
+                        }
+                      </small>
+
+
+                      {/* DELETE BUTTON */}
+
+                      <button
+                        type="button"
+                        className="delete-meeting"
+                        onClick={
+                          event => {
+
+                            event.stopPropagation();
+
+                            deleteMeeting(
+                              meeting.id
+                            );
+                          }
+                        }
+                        title="Delete meeting"
+                      >
+
+                        Delete
+
+                      </button>
+
+                    </div>
+
+                  )
                 )
+
               )}
 
             </section>
@@ -1603,42 +1901,75 @@ function App() {
                 </div>
 
 
-                {meetings.map(
-                  meeting => (
+                {meetings.length === 0 ? (
 
-                    <button
-                      className="meetingrow"
-                      key={
-                        meeting.id
-                      }
-                      onClick={() =>
-                        selectMeeting(
+                  <p>
+                    No meetings found.
+                  </p>
+
+                ) : (
+
+                  meetings.map(
+                    meeting => (
+
+                      <div
+                        className="meetingrow"
+                        key={
                           meeting.id
-                        )
-                      }
-                    >
-
-                      <FileText
-                        size={18}
-                      />
-
-                      <span>
-                        {
-                          meeting.title
                         }
-                      </span>
-
-                      <small>
-                        {
-                          new Date(
-                            meeting.created_at
-                          ).toLocaleString()
+                        onClick={() =>
+                          selectMeeting(
+                            meeting.id
+                          )
                         }
-                      </small>
+                      >
 
-                    </button>
+                        <FileText
+                          size={18}
+                        />
 
+                        <span>
+                          {
+                            meeting.title
+                          }
+                        </span>
+
+                        <small>
+                          {
+                            new Date(
+                              meeting.created_at
+                            ).toLocaleString()
+                          }
+                        </small>
+
+
+                        {/* DELETE BUTTON */}
+
+                        <button
+                          type="button"
+                          className="delete-meeting"
+                          onClick={
+                            event => {
+
+                              event.stopPropagation();
+
+                              deleteMeeting(
+                                meeting.id
+                              );
+                            }
+                          }
+                          title="Delete meeting"
+                        >
+
+                          Delete
+
+                        </button>
+
+                      </div>
+
+                    )
                   )
+
                 )}
 
               </section>
@@ -1701,6 +2032,24 @@ function App() {
                       PDF
 
                     </a>
+
+
+                    {/* DELETE OPEN MEETING */}
+
+                    <button
+                      type="button"
+                      className="delete-meeting"
+                      onClick={() =>
+                        deleteMeeting(
+                          selected.id
+                        )
+                      }
+                      title="Delete meeting"
+                    >
+
+                      Delete Meeting
+
+                    </button>
 
                   </div>
 
@@ -2162,7 +2511,7 @@ function App() {
 
         {/* ==================================================
             DECISIONS
-        =================================================== */}
+        ==================================================== */}
 
         {view ===
           "decisions" && (
