@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .db import db, init_db, seed, DATABASE_URL
+from .db import db, init_db, seed
 from .llm import analyze, answer_question
 from .stt import transcribe
 from .exporter import docx_bytes, pdf_bytes
