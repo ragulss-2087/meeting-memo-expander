@@ -1,0 +1,121 @@
+*{box-sizing:border-box}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;background:#f5f7fb;color:#172033}.app{display:flex;min-height:100vh}aside{width:245px;background:#101828;color:#d8e0ed;padding:26px 18px;position:fixed;inset:0 auto 0 0}.brand{font-size:21px;font-weight:800;display:flex;gap:9px;align-items:center;margin:4px 8px 40px}.brand span{color:#6ee7b7}nav{display:grid;gap:8px}nav button{background:transparent;border:0;color:#aebbd0;padding:12px;border-radius:10px;text-align:left;display:flex;gap:11px;align-items:center;font-size:14px}nav button.active,nav button:hover{background:#1c293c;color:white}.sidebox{margin-top:40px;border-top:1px solid #29364b;padding:20px 8px}.sidebox small{display:block;color:#71819a;font-size:10px;margin-bottom:8px}.sidebox select{width:100%;background:#182438;color:white;border:1px solid #2b3b54;border-radius:8px;padding:9px}main{margin-left:245px;width:calc(100% - 245px);padding:35px 5%;max-width:1500px}header{display:flex;justify-content:space-between;gap:30px;align-items:center;margin-bottom:28px}h1{margin:0 0 7px;font-size:30px}h2{margin:0 0 6px;font-size:19px}h3{font-size:14px;margin:18px 0 10px}.cardhead{display:flex;justify-content:space-between;align-items:flex-start;gap:15px}.cardhead span,header p{color:#6b7890;font-size:13px;margin:0}.search{background:white;border:1px solid #e1e6ee;border-radius:10px;display:flex;align-items:center;padding:0 12px;width:310px}.search input{border:0;outline:0;padding:11px;width:100%}.grid{display:grid;grid-template-columns:2fr 1fr;gap:18px;margin-bottom:18px}.card{background:white;border:1px solid #e5e9f0;border-radius:15px;padding:22px;margin-bottom:18px;box-shadow:0 5px 18px #10182808}.composer textarea{width:100%;height:180px;resize:vertical;border:1px solid #dde3ec;border-radius:10px;padding:13px;margin:10px 0;font:inherit;outline:none}.input{width:100%;border:1px solid #dde3ec;border-radius:10px;padding:11px;outline:none}.primary{border:0;background:#172033;color:white;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer}.primary:disabled{opacity:.6}.upload,.actions a{display:inline-flex;align-items:center;gap:6px;border:1px solid #dce3ec;border-radius:8px;padding:8px 10px;font-size:12px;color:#344056;text-decoration:none;cursor:pointer}.upload input{display:none}.stats{display:grid;grid-template-columns:1fr;gap:10px}.stats h2{margin-bottom:5px}.stat{background:#f7f9fc;border-radius:10px;padding:12px}.stat b{font-size:24px;display:block}.stat span{font-size:12px;color:#718096}.summary{background:#f7fafc;border-left:4px solid #6ee7b7;padding:14px;margin-top:20px;border-radius:6px;font-size:14px;line-height:1.6}.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:25px;margin-top:10px}.cols ul{padding-left:19px;color:#4e5c72;font-size:13px;line-height:1.7}.task{border:1px solid #e7ebf1;padding:10px;border-radius:9px;margin-bottom:8px}.task b{font-size:13px;display:block}.task span{font-size:11px;color:#748198}.qa{border-top:1px solid #edf0f5;margin-top:22px;padding-top:5px}.qa h3{display:flex;align-items:center;gap:7px}.qrow{display:flex;gap:8px}.answer{background:#f6f8fb;padding:13px;border-radius:9px;margin-top:10px;font-size:13px;line-height:1.6}.meetingrow{display:flex;width:100%;background:transparent;border:0;border-top:1px solid #edf0f5;padding:13px 5px;align-items:center;gap:10px;text-align:left;cursor:pointer;color:#263249}.meetingrow span{flex:1;font-weight:600}.meetingrow small{color:#8490a2}.results{background:white;border:1px solid #e5e9f0;padding:15px;border-radius:12px;margin-bottom:18px}.results button{display:block;border:0;background:transparent;padding:6px 0;color:#3157a6;cursor:pointer}.actions{display:flex;gap:7px}@media(max-width:900px){aside{position:static;width:100%;height:auto}.app{display:block}main{margin:0;width:100%}nav{display:flex}.sidebox{display:none}.grid,.cols{grid-template-columns:1fr}header{display:block}.search{width:100%;margin-top:15px}}
+/* =========================================
+   LIVE VOICE MEETING AGENT
+========================================= */
+
+.voice-agent {
+  margin-top: 30px;
+  padding: 28px;
+  border: 1px solid #e5e9f0;
+  border-radius: 15px;
+  background: #fbfcfe;
+  text-align: center;
+}
+
+.voice-agent-header h2 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin: 0 0 6px;
+}
+
+.voice-agent-header p {
+  margin: 0;
+  color: #6b7890;
+  font-size: 13px;
+}
+
+.voice-orb {
+  width: 104px;
+  height: 104px;
+  margin: 25px auto 15px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #172033;
+  color: white;
+  transition: transform .25s ease, opacity .25s ease;
+}
+
+.voice-orb.idle {
+  opacity: .65;
+}
+
+.voice-orb.listening {
+  animation: voicePulse 1.25s infinite;
+}
+
+.voice-orb.thinking {
+  animation: voicePulse 1.7s infinite;
+}
+
+.voice-orb.speaking {
+  animation: voicePulse .75s infinite;
+}
+
+.voice-status {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 18px;
+}
+
+.voice-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 13px 22px;
+  background: #172033;
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.voice-button.stop {
+  background: #6b2737;
+}
+
+.conversation {
+  max-width: 760px;
+  margin: 28px auto 0;
+  text-align: left;
+}
+
+.voice-message {
+  padding: 12px 15px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.voice-message strong {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.user-message {
+  margin-left: 12%;
+  background: #eef3fa;
+}
+
+.ai-message {
+  margin-right: 12%;
+  background: #f3f7f5;
+}
+
+@keyframes voicePulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+.delete-meeting{flex:0 0 auto;border:1px solid #f0cbd1;border-radius:7px;padding:6px 9px;color:#9f3146;background:#fff7f8;font-size:11px;font-weight:700;cursor:pointer}.delete-meeting:hover{background:#fff0f2}
