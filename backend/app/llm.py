@@ -183,49 +183,34 @@ Transcript:
 async def answer_question(
     question: str,
     context: str,
-    history: list[dict] | None = None
+    history=None
 ):
-
     history = history or []
 
     history_text = ""
 
-    if history:
-        history_lines = []
+    for message in history:
+        role = message.get("role", "user")
+        content = message.get("content", "")
 
-        for message in history[-8:]:
-            role = message.get("role", "user")
-            text = message.get("text", "")
-
-            if text:
-                history_lines.append(
-                    f"{role}: {text}"
-                )
-
-        history_text = "\n".join(
-            history_lines
+        history_text += (
+            f"{role}: {content}\n"
         )
 
     prompt = f"""
-You are the voice assistant for one selected meeting.
+Answer the user's question using ONLY the meeting information provided below.
 
-Answer the user's question using ONLY the selected meeting information.
-The conversation history may be used to understand follow-up questions,
-but it must never be treated as a source of facts outside the meeting.
-
-Selected meeting information:
+Meeting information:
 
 {context}
 
-Previous voice conversation:
+Previous conversation:
 
 {history_text}
 
 Current user question:
 
 {question}
-
-If the meeting does not contain enough information to answer, say so clearly.
 
 Return ONLY valid JSON with this field:
 

@@ -11,9 +11,33 @@ from .llm import analyze, answer_question
 from .stt import transcribe
 from .exporter import docx_bytes, pdf_bytes
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-app = FastAPI(title="Meeting Memo Expander Level 3")
 
+# =========================================================
+# DATABASE CONFIGURATION
+# =========================================================
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+print(
+    "DATABASE MODE:",
+    "PostgreSQL" if DATABASE_URL else "SQLite"
+)
+
+PLACEHOLDER = "%s" if DATABASE_URL else "?"
+
+
+# =========================================================
+# FASTAPI APP
+# =========================================================
+
+app = FastAPI(
+    title="Meeting Memo Expander Level 3"
+)
+
+
+# =========================================================
+# CORS
+# =========================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,137 +53,188 @@ app.add_middleware(
 )
 
 
-# PostgreSQL uses %s
-# SQLite uses ?
-PLACEHOLDER = "%s" if DATABASE_URL else "?"
-
+# =========================================================
+# STARTUP
+# =========================================================
 
 @app.on_event("startup")
 def startup():
+
     init_db()
     seed()
 
 
-# ---------------------------------------------------------
-# Request Models
-# ---------------------------------------------------------
+# =========================================================
+# MODELS
+# =========================================================
 
-class ProjectIn(BaseModel):
+class ProjectCreate(BaseModel):
     name: str
     description: str = ""
 
 
-class MeetingIn(BaseModel):
+class MeetingCreate(BaseModel):
     project_id: int
     title: str
-    transcript: str
+    transcript: str = ""
 
 
-class QuestionIn(BaseModel):
+class TaskUpdate(BaseModel):
+    status: str
+
+
+class AskRequest(BaseModel):
     question: str
-    history: list[dict] = []
+    history: list = []
 
 
-# ---------------------------------------------------------
-# Health
-# ---------------------------------------------------------
+# =========================================================
+# HEALTH
+# =========================================================
 
 @app.get("/api/health")
 def health():
-    return {"ok": True}
+
+    return {
+        "status": "ok",
+        "database": "PostgreSQL" if DATABASE_URL else "SQLite"
+    }
 
 
-# ---------------------------------------------------------
-# Projects
-# ---------------------------------------------------------
+# =========================================================
+# PROJECTS
+# =========================================================
 
 @app.get("/api/projects")
-def projects():
+def get_projects():
+
     with db() as con:
-        return [
-            dict(x)
-            for x in con.execute(
-                "SELECT * FROM projects ORDER BY id DESC"
-            )
-        ]
+
+        rows = con.execute(
+            """
+            SELECT
+                id,
+                name,
+                description,
+                created_at
+            FROM projects
+            ORDER BY id
+            """
+        ).fetchall()
+
+        return [dict(row) for row in rows]
 
 
 @app.post("/api/projects")
-def create_project(x: ProjectIn):
+def create_project(project: ProjectCreate):
+
     with db() as con:
 
         if DATABASE_URL:
-            cur = con.execute(
-                """
+
+            row = con.execute(
+                f"""
                 INSERT INTO projects(
                     name,
                     description
                 )
-                VALUES (%s, %s)
+                VALUES ({PLACEHOLDER}, {PLACEHOLDER})
                 RETURNING id
                 """,
-                (x.name, x.description)
-            )
-            project_id = cur.fetchone()["id"]
+                (
+                    project.name,
+                    project.description
+                )
+            ).fetchone()
+
+            project_id = row["id"]
 
         else:
-            cur = con.execute(
-                """
+
+            cursor = con.execute(
+                f"""
                 INSERT INTO projects(
                     name,
                     description
                 )
-                VALUES (?, ?)
+                VALUES ({PLACEHOLDER}, {PLACEHOLDER})
                 """,
-                (x.name, x.description)
+                (
+                    project.name,
+                    project.description
+                )
             )
-            project_id = cur.lastrowid
+
+            project_id = cursor.lastrowid
 
         return {
             "id": project_id,
-            "name": x.name
+            "name": project.name,
+            "description": project.description
         }
 
 
-# ---------------------------------------------------------
-# Meetings
-# ---------------------------------------------------------
+# =========================================================
+# MEETINGS
+# =========================================================
 
 @app.get("/api/meetings")
-def meetings(project_id: int | None = None):
+def get_meetings(project_id: int):
+
     with db() as con:
 
-        if project_id:
-            rows = con.execute(
-                f"""
-                SELECT *
-                FROM meetings
-                WHERE project_id={PLACEHOLDER}
-                ORDER BY id DESC
-                """,
-                (project_id,)
-            )
-        else:
-            rows = con.execute(
-                "SELECT * FROM meetings ORDER BY id DESC"
-            )
+        rows = con.execute(
+            f"""
+            SELECT
+                id,
+                project_id,
+                title,
+                transcript,
+                analysis_json,
+                created_at
+            FROM meetings
+            WHERE project_id = {PLACEHOLDER}
+            ORDER BY id DESC
+            """,
+            (project_id,)
+        ).fetchall()
 
-        return [dict(x) for x in rows]
+        result = []
+
+        for row in rows:
+
+            item = dict(row)
+
+            try:
+                item["analysis"] = json.loads(
+                    item.get("analysis_json") or "{}"
+                )
+            except Exception:
+                item["analysis"] = {}
+
+            result.append(item)
+
+        return result
 
 
-@app.delete("/api/meetings/{mid}")
-def delete_meeting(mid: int):
-    """Delete one meeting and all tasks/decisions belonging to it."""
+@app.get("/api/meetings/{meeting_id}")
+def get_meeting(meeting_id: int):
 
     with db() as con:
 
         row = con.execute(
             f"""
-            SELECT id
+            SELECT
+                id,
+                project_id,
+                title,
+                transcript,
+                analysis_json,
+                created_at
             FROM meetings
-            WHERE id={PLACEHOLDER}
+            WHERE id = {PLACEHOLDER}
             """,
-            (mid,)
+            (meeting_id,)
         ).fetchone()
 
         if not row:
@@ -168,381 +243,530 @@ def delete_meeting(mid: int):
                 detail="Meeting not found"
             )
 
-        con.execute(
-            f"DELETE FROM tasks WHERE meeting_id={PLACEHOLDER}",
-            (mid,)
-        )
+        item = dict(row)
 
-        con.execute(
-            f"DELETE FROM decisions WHERE meeting_id={PLACEHOLDER}",
-            (mid,)
-        )
-
-        con.execute(
-            f"DELETE FROM meetings WHERE id={PLACEHOLDER}",
-            (mid,)
-        )
-
-    return {
-        "ok": True,
-        "deleted_meeting_id": mid
-    }
-
-
-@app.get("/api/meetings/{mid}")
-def meeting(mid: int):
-    with db() as con:
-
-        row = con.execute(
-            f"""
-            SELECT *
-            FROM meetings
-            WHERE id={PLACEHOLDER}
-            """,
-            (mid,)
-        ).fetchone()
-
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Meeting not found"
+        try:
+            item["analysis"] = json.loads(
+                item.get("analysis_json") or "{}"
             )
+        except Exception:
+            item["analysis"] = {}
 
-        return dict(row)
+        return item
 
 
 @app.post("/api/meetings")
-async def create_meeting(x: MeetingIn):
+async def create_meeting(meeting: MeetingCreate):
+
+    transcript = meeting.transcript or ""
+
+    # -----------------------------------------------------
+    # AI ANALYSIS
+    # -----------------------------------------------------
 
     try:
-        analysis = await analyze(x.transcript)
 
-    except RuntimeError as e:
-        raise HTTPException(
-            status_code=429,
-            detail=str(e)
+        result = await analyze(transcript)
+
+    except Exception as e:
+
+        print(
+            "AI ANALYSIS ERROR:",
+            str(e)
         )
+
+        # -------------------------------------------------
+        # IMPORTANT:
+        # If Gemini quota is exhausted, the meeting is
+        # still saved instead of failing completely.
+        # -------------------------------------------------
+
+        result = {
+            "summary": "AI analysis is temporarily unavailable.",
+            "decisions": [],
+            "action_items": [],
+            "risks": [],
+            "follow_up_questions": []
+        }
+
+    analysis_json = json.dumps(
+        result,
+        ensure_ascii=False
+    )
+
+    # =====================================================
+    # SAVE MEETING
+    # =====================================================
 
     with db() as con:
 
-        # -------------------------------------------------
-        # Save Meeting
-        # -------------------------------------------------
-
         if DATABASE_URL:
 
-            cur = con.execute(
-                """
+            row = con.execute(
+                f"""
                 INSERT INTO meetings(
                     project_id,
                     title,
                     transcript,
                     analysis_json
                 )
-                VALUES (%s, %s, %s, %s)
+                VALUES (
+                    {PLACEHOLDER},
+                    {PLACEHOLDER},
+                    {PLACEHOLDER},
+                    {PLACEHOLDER}
+                )
                 RETURNING id
                 """,
                 (
-                    x.project_id,
-                    x.title,
-                    x.transcript,
-                    json.dumps(analysis)
+                    meeting.project_id,
+                    meeting.title,
+                    transcript,
+                    analysis_json
                 )
-            )
+            ).fetchone()
 
-            mid = cur.fetchone()["id"]
+            meeting_id = row["id"]
 
         else:
 
-            cur = con.execute(
-                """
+            cursor = con.execute(
+                f"""
                 INSERT INTO meetings(
                     project_id,
                     title,
                     transcript,
                     analysis_json
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (
+                    {PLACEHOLDER},
+                    {PLACEHOLDER},
+                    {PLACEHOLDER},
+                    {PLACEHOLDER}
+                )
                 """,
                 (
-                    x.project_id,
-                    x.title,
-                    x.transcript,
-                    json.dumps(analysis)
+                    meeting.project_id,
+                    meeting.title,
+                    transcript,
+                    analysis_json
                 )
             )
 
-            mid = cur.lastrowid
+            meeting_id = cursor.lastrowid
 
-        # -------------------------------------------------
-        # Save Action Items
-        # -------------------------------------------------
+        # =================================================
+        # SAVE ACTION ITEMS
+        # =================================================
 
-        for a in analysis.get("action_items", []):
+        action_items = result.get(
+            "action_items",
+            []
+        )
 
-            if isinstance(a, dict):
-                title = a.get("title", "")
-                owner = a.get("owner", "")
-                deadline = a.get("deadline", "")
+        for item in action_items:
+
+            if isinstance(item, dict):
+
+                title = (
+                    item.get("title")
+                    or item.get("task")
+                    or item.get("action")
+                    or ""
+                )
+
+                owner = (
+                    item.get("owner")
+                    or ""
+                )
+
+                deadline = (
+                    item.get("deadline")
+                    or ""
+                )
+
             else:
-                title = str(a)
+
+                title = str(item)
                 owner = ""
                 deadline = ""
 
-            con.execute(
-                f"""
-                INSERT INTO tasks(
-                    meeting_id,
-                    title,
-                    owner,
-                    deadline
+            if title:
+
+                con.execute(
+                    f"""
+                    INSERT INTO tasks(
+                        meeting_id,
+                        title,
+                        owner,
+                        deadline,
+                        status
+                    )
+                    VALUES (
+                        {PLACEHOLDER},
+                        {PLACEHOLDER},
+                        {PLACEHOLDER},
+                        {PLACEHOLDER},
+                        {PLACEHOLDER}
+                    )
+                    """,
+                    (
+                        meeting_id,
+                        title,
+                        owner,
+                        deadline,
+                        "Open"
+                    )
                 )
-                VALUES ({PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER})
-                """,
-                (
-                    mid,
-                    title,
-                    owner,
-                    deadline
+
+        # =================================================
+        # SAVE DECISIONS
+        # =================================================
+
+        decisions = result.get(
+            "decisions",
+            []
+        )
+
+        for decision in decisions:
+
+            if isinstance(decision, dict):
+
+                decision_text = (
+                    decision.get("decision")
+                    or decision.get("title")
+                    or decision.get("text")
+                    or ""
                 )
-            )
 
-        # -------------------------------------------------
-        # Save Decisions
-        # -------------------------------------------------
+                context = (
+                    decision.get("context")
+                    or ""
+                )
 
-        for d in analysis.get("decisions", []):
-
-            if isinstance(d, dict):
-                decision = d.get("decision", "")
-                context = d.get("context", "")
             else:
-                decision = str(d)
+
+                decision_text = str(decision)
                 context = ""
 
-            con.execute(
-                f"""
-                INSERT INTO decisions(
-                    meeting_id,
-                    decision,
-                    context
+            if decision_text:
+
+                con.execute(
+                    f"""
+                    INSERT INTO decisions(
+                        meeting_id,
+                        decision,
+                        context
+                    )
+                    VALUES (
+                        {PLACEHOLDER},
+                        {PLACEHOLDER},
+                        {PLACEHOLDER}
+                    )
+                    """,
+                    (
+                        meeting_id,
+                        decision_text,
+                        context
+                    )
                 )
-                VALUES ({PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER})
-                """,
-                (
-                    mid,
-                    decision,
-                    context
-                )
-            )
+
+    # =====================================================
+    # RESPONSE
+    # =====================================================
 
     return {
-        "id": mid,
-        "analysis": analysis
+        "id": meeting_id,
+        "project_id": meeting.project_id,
+        "title": meeting.title,
+        "transcript": transcript,
+        "analysis": result
     }
 
 
-# ---------------------------------------------------------
-# Speech-to-Text
-# ---------------------------------------------------------
+# =========================================================
+# DELETE MEETING
+# =========================================================
+
+@app.delete("/api/meetings/{meeting_id}")
+def delete_meeting(meeting_id: int):
+
+    with db() as con:
+
+        meeting = con.execute(
+            f"""
+            SELECT id
+            FROM meetings
+            WHERE id = {PLACEHOLDER}
+            """,
+            (meeting_id,)
+        ).fetchone()
+
+        if not meeting:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Meeting not found"
+            )
+
+        con.execute(
+            f"""
+            DELETE FROM tasks
+            WHERE meeting_id = {PLACEHOLDER}
+            """,
+            (meeting_id,)
+        )
+
+        con.execute(
+            f"""
+            DELETE FROM decisions
+            WHERE meeting_id = {PLACEHOLDER}
+            """,
+            (meeting_id,)
+        )
+
+        con.execute(
+            f"""
+            DELETE FROM meetings
+            WHERE id = {PLACEHOLDER}
+            """,
+            (meeting_id,)
+        )
+
+        return {
+            "message": "Meeting deleted successfully"
+        }
+
+
+# =========================================================
+# TRANSCRIPTION
+# =========================================================
 
 @app.post("/api/transcribe")
 async def transcribe_audio(
     file: UploadFile = File(...)
 ):
+
+    audio_bytes = await file.read()
+
+    if not audio_bytes:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Empty audio file"
+        )
+
     try:
 
+        text = await transcribe(
+            audio_bytes,
+            file.filename or "audio.webm"
+        )
+
         return {
-            "text": await transcribe(file)
+            "transcript": text
         }
 
     except Exception as e:
 
+        print(
+            "TRANSCRIPTION ERROR:",
+            str(e)
+        )
+
         raise HTTPException(
-            status_code=400,
+            status_code=500,
             detail=str(e)
         )
 
 
-# ---------------------------------------------------------
-# Tasks
-# ---------------------------------------------------------
+# =========================================================
+# TASKS
+# =========================================================
 
-@app.get("/api/tasks")
-def tasks():
+@app.get("/api/meetings/{meeting_id}/tasks")
+def get_tasks(meeting_id: int):
 
     with db() as con:
 
-        return [
-            dict(x)
-            for x in con.execute(
-                """
-                SELECT
-                    t.*,
-                    m.title meeting_title
-                FROM tasks t
-                JOIN meetings m
-                    ON m.id = t.meeting_id
-                ORDER BY t.id DESC
-                """
-            )
-        ]
+        rows = con.execute(
+            f"""
+            SELECT
+                id,
+                meeting_id,
+                title,
+                owner,
+                deadline,
+                status
+            FROM tasks
+            WHERE meeting_id = {PLACEHOLDER}
+            ORDER BY id
+            """,
+            (meeting_id,)
+        ).fetchall()
+
+        return [dict(row) for row in rows]
 
 
-@app.patch("/api/tasks/{tid}")
+@app.patch("/api/tasks/{task_id}")
 def update_task(
-    tid: int,
-    status: str
+    task_id: int,
+    task: TaskUpdate
 ):
 
     with db() as con:
+
+        existing = con.execute(
+            f"""
+            SELECT id
+            FROM tasks
+            WHERE id = {PLACEHOLDER}
+            """,
+            (task_id,)
+        ).fetchone()
+
+        if not existing:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Task not found"
+            )
 
         con.execute(
             f"""
             UPDATE tasks
-            SET status={PLACEHOLDER}
-            WHERE id={PLACEHOLDER}
+            SET status = {PLACEHOLDER}
+            WHERE id = {PLACEHOLDER}
             """,
-            (status, tid)
+            (
+                task.status,
+                task_id
+            )
         )
 
         return {
-            "ok": True
+            "message": "Task updated successfully",
+            "id": task_id,
+            "status": task.status
         }
 
 
-# ---------------------------------------------------------
-# Decisions
-# ---------------------------------------------------------
+# =========================================================
+# DECISIONS
+# =========================================================
 
-@app.get("/api/decisions")
-def decisions():
+@app.get("/api/meetings/{meeting_id}/decisions")
+def get_decisions(meeting_id: int):
 
     with db() as con:
 
-        return [
-            dict(x)
-            for x in con.execute(
-                """
-                SELECT
-                    d.*,
-                    m.title meeting_title
-                FROM decisions d
-                JOIN meetings m
-                    ON m.id = d.meeting_id
-                ORDER BY d.id DESC
-                """
-            )
-        ]
+        rows = con.execute(
+            f"""
+            SELECT
+                id,
+                meeting_id,
+                decision,
+                context
+            FROM decisions
+            WHERE meeting_id = {PLACEHOLDER}
+            ORDER BY id
+            """,
+            (meeting_id,)
+        ).fetchall()
+
+        return [dict(row) for row in rows]
 
 
-# ---------------------------------------------------------
-# Search
-# ---------------------------------------------------------
+# =========================================================
+# SEARCH
+# =========================================================
 
 @app.get("/api/search")
-def search(q: str):
-
-    with db() as con:
-
-        like = f"%{q}%"
-
-        meetings_result = [
-            dict(x)
-            for x in con.execute(
-                f"""
-                SELECT
-                    id,
-                    title,
-                    created_at
-                FROM meetings
-                WHERE title LIKE {PLACEHOLDER}
-                   OR transcript LIKE {PLACEHOLDER}
-                ORDER BY id DESC
-                """,
-                (like, like)
-            )
-        ]
-
-        tasks_result = [
-            dict(x)
-            for x in con.execute(
-                f"""
-                SELECT
-                    id,
-                    title,
-                    owner,
-                    status
-                FROM tasks
-                WHERE title LIKE {PLACEHOLDER}
-                   OR owner LIKE {PLACEHOLDER}
-                ORDER BY id DESC
-                """,
-                (like, like)
-            )
-        ]
-
-        return {
-            "meetings": meetings_result,
-            "tasks": tasks_result
-        }
-
-
-# ---------------------------------------------------------
-# Ask Question About Meeting
-# ---------------------------------------------------------
-
-@app.post("/api/meetings/{mid}/ask")
-async def ask(
-    mid: int,
-    x: QuestionIn
+def search(
+    q: str,
+    project_id: int | None = None
 ):
 
+    search_text = f"%{q}%"
+
     with db() as con:
 
-        row = con.execute(
-            f"""
-            SELECT transcript
-            FROM meetings
-            WHERE id={PLACEHOLDER}
-            """,
-            (mid,)
-        ).fetchone()
+        if project_id is not None:
 
-    if not row:
-        raise HTTPException(
-            status_code=404,
-            detail="Meeting not found"
-        )
+            rows = con.execute(
+                f"""
+                SELECT
+                    id,
+                    project_id,
+                    title,
+                    transcript,
+                    analysis_json,
+                    created_at
+                FROM meetings
+                WHERE project_id = {PLACEHOLDER}
+                AND (
+                    title LIKE {PLACEHOLDER}
+                    OR transcript LIKE {PLACEHOLDER}
+                )
+                ORDER BY id DESC
+                """,
+                (
+                    project_id,
+                    search_text,
+                    search_text
+                )
+            ).fetchall()
 
-    try:
+        else:
 
-        answer = await answer_question(
-            x.question,
-            row["transcript"],
-            x.history
-        )
+            rows = con.execute(
+                f"""
+                SELECT
+                    id,
+                    project_id,
+                    title,
+                    transcript,
+                    analysis_json,
+                    created_at
+                FROM meetings
+                WHERE (
+                    title LIKE {PLACEHOLDER}
+                    OR transcript LIKE {PLACEHOLDER}
+                )
+                ORDER BY id DESC
+                """,
+                (
+                    search_text,
+                    search_text
+                )
+            ).fetchall()
 
-        return {
-            "answer": answer
-        }
+        result = []
 
-    except RuntimeError as e:
+        for row in rows:
 
-        raise HTTPException(
-            status_code=429,
-            detail=str(e)
-        )
+            item = dict(row)
+
+            try:
+                item["analysis"] = json.loads(
+                    item.get("analysis_json") or "{}"
+                )
+            except Exception:
+                item["analysis"] = {}
+
+            result.append(item)
+
+        return result
 
 
-# ---------------------------------------------------------
-# Export Meeting
-# ---------------------------------------------------------
+# =========================================================
+# MEETING AI Q&A
+# =========================================================
 
-@app.get("/api/meetings/{mid}/export/{kind}")
-def export(
-    mid: int,
-    kind: str
+@app.post("/api/meetings/{meeting_id}/ask")
+async def ask_meeting_question(
+    meeting_id: int,
+    x: AskRequest
 ):
 
     with db() as con:
@@ -550,68 +774,173 @@ def export(
         row = con.execute(
             f"""
             SELECT
+                id,
                 title,
+                transcript,
                 analysis_json
             FROM meetings
-            WHERE id={PLACEHOLDER}
+            WHERE id = {PLACEHOLDER}
             """,
-            (mid,)
+            (meeting_id,)
         ).fetchone()
 
-    if not row:
-        raise HTTPException(
-            status_code=404,
-            detail="Meeting not found"
+        if not row:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Meeting not found"
+            )
+
+        transcript = row["transcript"]
+
+        analysis_json = row["analysis_json"] or "{}"
+
+        context = (
+            "Meeting title: "
+            + row["title"]
+            + "\n\n"
+            + "Transcript:\n"
+            + transcript
+            + "\n\n"
+            + "Analysis:\n"
+            + analysis_json
         )
 
-    analysis = json.loads(
-        row["analysis_json"] or "{}"
+    try:
+
+        answer = await answer_question(
+            x.question,
+            context,
+            x.history
+        )
+
+        return answer
+
+    except Exception as e:
+
+        print(
+            "AI QUESTION ERROR:",
+            str(e)
+        )
+
+        raise HTTPException(
+            status_code=429,
+            detail="Gemini quota reached. Please try again after the quota resets."
+        )
+
+
+# =========================================================
+# DOCX EXPORT
+# =========================================================
+
+@app.get("/api/meetings/{meeting_id}/export/docx")
+def export_docx(meeting_id: int):
+
+    with db() as con:
+
+        row = con.execute(
+            f"""
+            SELECT
+                id,
+                title,
+                transcript,
+                analysis_json
+            FROM meetings
+            WHERE id = {PLACEHOLDER}
+            """,
+            (meeting_id,)
+        ).fetchone()
+
+        if not row:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Meeting not found"
+            )
+
+        meeting = dict(row)
+
+    try:
+
+        analysis = json.loads(
+            meeting.get("analysis_json") or "{}"
+        )
+
+    except Exception:
+
+        analysis = {}
+
+    data = docx_bytes(
+        meeting,
+        analysis
     )
 
-    # -----------------------------------------------------
-    # DOCX
-    # -----------------------------------------------------
+    return StreamingResponse(
+        iter([data]),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{meeting["title"]}.docx"'
+            )
+        }
+    )
 
-    if kind == "docx":
 
-        data = docx_bytes(
-            row["title"],
-            analysis
+# =========================================================
+# PDF EXPORT
+# =========================================================
+
+@app.get("/api/meetings/{meeting_id}/export/pdf")
+def export_pdf(meeting_id: int):
+
+    with db() as con:
+
+        row = con.execute(
+            f"""
+            SELECT
+                id,
+                title,
+                transcript,
+                analysis_json
+            FROM meetings
+            WHERE id = {PLACEHOLDER}
+            """,
+            (meeting_id,)
+        ).fetchone()
+
+        if not row:
+
+            raise HTTPException(
+                status_code=404,
+                detail="Meeting not found"
+            )
+
+        meeting = dict(row)
+
+    try:
+
+        analysis = json.loads(
+            meeting.get("analysis_json") or "{}"
         )
 
-        return StreamingResponse(
-            data,
-            media_type=(
-                "application/vnd.openxmlformats-"
-                "officedocument.wordprocessingml.document"
-            ),
-            headers={
-                "Content-Disposition":
-                    f'attachment; filename="meeting_{mid}.docx"'
-            }
-        )
+    except Exception:
 
-    # -----------------------------------------------------
-    # PDF
-    # -----------------------------------------------------
+        analysis = {}
 
-    if kind == "pdf":
+    data = pdf_bytes(
+        meeting,
+        analysis
+    )
 
-        data = pdf_bytes(
-            row["title"],
-            analysis
-        )
-
-        return StreamingResponse(
-            data,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition":
-                    f'attachment; filename="meeting_{mid}.pdf"'
-            }
-        )
-
-    raise HTTPException(
-        status_code=400,
-        detail="Use docx or pdf"
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{meeting["title"]}.pdf"'
+            )
+        }
     )
