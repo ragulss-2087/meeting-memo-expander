@@ -18,6 +18,19 @@ For each individual meeting, the system can:
 - speak AI answers aloud
 - export meeting analysis to DOCX or PDF
 - delete a meeting together with its tasks and decisions
+- keep projects and meeting records private to the signed-in account
+
+## Accounts and private data
+
+Create an account from the sign-in screen. Each new account gets its own
+`My Project`; projects, meetings, tasks, decisions, search, and exports are
+limited to that account. Passwords are stored as salted PBKDF2 hashes, and
+sign-in sessions expire after 14 days.
+
+The backend adds the account and session tables and adds project ownership to
+an existing database when it starts. Existing projects that were created
+before accounts existed have no owner and are intentionally not shown to new
+accounts. This avoids assigning shared meeting content to the wrong person.
 
 ## Suitable meeting examples
 

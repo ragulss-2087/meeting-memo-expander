@@ -26,7 +26,10 @@ const API =
 // ======================================================
 
 async function api(path, opts = {}) {
-  const response = await fetch(API + path, opts);
+  const headers = new Headers(opts.headers || {});
+  const token = sessionStorage.getItem("meeting-memo-token");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(API + path, { ...opts, headers });
 
   if (!response.ok) {
     let message = "Something went wrong.";
@@ -55,6 +58,14 @@ async function api(path, opts = {}) {
 // ======================================================
 
 function App() {
+
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authMode, setAuthMode] = useState("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
 
   // ----------------------------------------------------
   // PROJECTS
@@ -221,10 +232,73 @@ function App() {
 
 
   useEffect(() => {
-
-    load();
-
+    const token = sessionStorage.getItem("meeting-memo-token");
+    if (!token) {
+      setAuthReady(true);
+      return;
+    }
+    api("/auth/me")
+      .then(setUser)
+      .catch(() => sessionStorage.removeItem("meeting-memo-token"))
+      .finally(() => setAuthReady(true));
   }, []);
+
+  useEffect(() => {
+    if (user) load();
+  }, [user]);
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const result = await api(`/auth/${authMode === "register" ? "register" : "login"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail, password: authPassword }),
+      });
+      sessionStorage.setItem("meeting-memo-token", result.access_token);
+      setUser(result.user);
+      setAuthPassword("");
+    } catch (err) {
+      setAuthError(err.message);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function signOut() {
+    try { await api("/auth/logout", { method: "POST" }); } catch { /* Clear the local session even if offline. */ }
+    sessionStorage.removeItem("meeting-memo-token");
+    stopVoiceConversation();
+    setUser(null);
+    setProjects([]);
+    setProject(null);
+    setMeetings([]);
+    setTasks([]);
+    setDecisions([]);
+    setSelected(null);
+  }
+
+  async function downloadExport(format) {
+    if (!selected) return;
+    try {
+      const token = sessionStorage.getItem("meeting-memo-token");
+      const response = await fetch(`${API}/meetings/${selected.id}/export/${format}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Could not download this file.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${selected.title}.${format}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
 
   // ====================================================
@@ -1250,6 +1324,34 @@ function App() {
     selected?.analysis ||
     null;
 
+  if (!authReady) {
+    return <div className="auth-screen"><div className="auth-card">Loading your workspace…</div></div>;
+  }
+
+  if (!user) {
+    return (
+      <div className="auth-screen">
+        <form className="auth-card" onSubmit={submitAuth}>
+          <div className="brand"><Brain /> Memo<span>Agent</span></div>
+          <h1>{authMode === "register" ? "Create your account" : "Welcome back"}</h1>
+          <p>Your meetings and projects are private to your account.</p>
+          {authError && <div className="error">{authError}</div>}
+          <label htmlFor="auth-email">Email</label>
+          <input id="auth-email" className="input auth-input" type="email" autoComplete="email" required value={authEmail} onChange={event => setAuthEmail(event.target.value)} />
+          <label htmlFor="auth-password">Password</label>
+          <input id="auth-password" className="input auth-input" type="password" autoComplete={authMode === "register" ? "new-password" : "current-password"} minLength={8} required value={authPassword} onChange={event => setAuthPassword(event.target.value)} />
+          {authMode === "register" && <small className="auth-hint">Use at least 8 characters.</small>}
+          <button className="primary auth-submit" type="submit" disabled={authBusy}>
+            {authBusy ? "Please wait…" : authMode === "register" ? "Create account" : "Sign in"}
+          </button>
+          <button className="auth-switch" type="button" onClick={() => { setAuthMode(authMode === "register" ? "login" : "register"); setAuthError(""); }}>
+            {authMode === "register" ? "Already have an account? Sign in" : "New here? Create an account"}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
 
   // ====================================================
   // UI
@@ -1531,6 +1633,11 @@ function App() {
               }
             />
 
+          </div>
+
+          <div className="account-controls">
+            <span>{user.email}</span>
+            <button type="button" className="account-signout" onClick={signOut}>Sign out</button>
           </div>
 
         </header>
@@ -2005,9 +2112,8 @@ function App() {
                   <div className="actions">
 
                     <a
-                      href={
-                        `${API}/meetings/${selected.id}/export/docx`
-                      }
+                      href="#download-docx"
+                      onClick={event => { event.preventDefault(); downloadExport("docx"); }}
                     >
 
                       <Download
@@ -2020,9 +2126,8 @@ function App() {
 
 
                     <a
-                      href={
-                        `${API}/meetings/${selected.id}/export/pdf`
-                      }
+                      href="#download-pdf"
+                      onClick={event => { event.preventDefault(); downloadExport("pdf"); }}
                     >
 
                       <Download

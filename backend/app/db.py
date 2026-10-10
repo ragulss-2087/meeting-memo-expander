@@ -18,8 +18,23 @@ print(
 
 POSTGRES_SCHEMA = """
 
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS projects (
     id SERIAL PRIMARY KEY,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -62,8 +77,23 @@ CREATE TABLE IF NOT EXISTS decisions (
 
 SQLITE_SCHEMA = """
 
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -176,6 +206,12 @@ def init_db():
                     if statement:
                         cur.execute(statement)
 
+                # Add ownership to existing databases without removing data.
+                cur.execute(
+                    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS "
+                    "owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE"
+                )
+
             con.commit()
 
     else:
@@ -183,6 +219,16 @@ def init_db():
         with db() as con:
 
             con.executescript(SQLITE_SCHEMA)
+
+            columns = {
+                row["name"]
+                for row in con.execute("PRAGMA table_info(projects)").fetchall()
+            }
+            if "owner_id" not in columns:
+                con.execute(
+                    "ALTER TABLE projects ADD COLUMN owner_id INTEGER "
+                    "REFERENCES users(id) ON DELETE CASCADE"
+                )
 
 
 # =========================================================
