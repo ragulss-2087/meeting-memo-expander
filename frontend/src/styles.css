@@ -119,3 +119,79 @@
 }
 
 .delete-meeting{flex:0 0 auto;border:1px solid #f0cbd1;border-radius:7px;padding:6px 9px;color:#9f3146;background:#fff7f8;font-size:11px;font-weight:700;cursor:pointer}.delete-meeting:hover{background:#fff0f2}
+
+/* Responsive layout refinements */
+html { min-width: 320px; overflow-x: hidden; }
+body, #root, .app { min-width: 0; width: 100%; max-width: 100%; }
+main, .card, .cardhead, .grid > *, .cols > *, .analysis > *, .results,
+.voice-agent, .search, .meetingrow, .task, .summary {
+  min-width: 0;
+  max-width: 100%;
+}
+main, .results, .analysis, .card { overflow-wrap: anywhere; }
+input, textarea, select, button { max-width: 100%; font: inherit; }
+textarea, input { min-width: 0; }
+img, svg { max-width: 100%; }
+.analysis .cardhead, .analysis .actions { flex-wrap: wrap; }
+
+@media (min-width: 901px) and (max-width: 1200px) {
+  main { padding: 30px 3%; }
+  .grid { grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr); }
+  .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+}
+
+@media (max-width: 900px) {
+  aside { padding: 18px 20px 12px; }
+  .brand { margin: 0 4px 14px; }
+  nav {
+    display: flex; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch; padding-bottom: 4px;
+  }
+  nav button { flex: 0 0 auto; white-space: nowrap; }
+  main { padding: 28px 4%; }
+  .grid { grid-template-columns: minmax(0, 1.5fr) minmax(200px, 1fr); }
+  .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+  header { align-items: flex-start; flex-wrap: wrap; }
+}
+
+@media (max-width: 640px) {
+  aside { padding: 16px 14px 10px; }
+  .brand { font-size: 19px; margin: 0 4px 12px; }
+  nav button { padding: 10px; font-size: 13px; }
+  main { padding: 22px 14px; }
+  header { display: flex; gap: 14px; margin-bottom: 20px; }
+  header > div, header > section { min-width: 0; width: 100%; }
+  h1 { font-size: clamp(23px, 7vw, 30px); overflow-wrap: anywhere; }
+  h2 { font-size: 18px; overflow-wrap: anywhere; }
+  .search { width: 100%; margin-top: 0; }
+  .grid, .cols { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .card { padding: 16px; border-radius: 12px; margin-bottom: 14px; }
+  .cardhead { flex-wrap: wrap; }
+  .cardhead > div { min-width: 0; max-width: 100%; }
+  .composer textarea { height: 150px; margin: 8px 0; }
+  .primary, .voice-button { min-height: 44px; }
+  .composer .primary, .qrow .primary, .voice-button { width: 100%; }
+  .qrow { flex-direction: column; }
+  .actions { gap: 8px; }
+  .analysis .actions { width: 100%; }
+  .analysis .actions > a, .analysis .actions > button {
+    flex: 1 1 auto; justify-content: center; text-align: center;
+  }
+  .meetingrow { flex-wrap: wrap; padding: 12px 2px; }
+  .meetingrow span { flex-basis: calc(100% - 30px); overflow-wrap: anywhere; }
+  .meetingrow small { flex: 1 1 auto; }
+  .delete-meeting { min-height: 36px; }
+  .voice-agent { padding: 20px 14px; margin-top: 20px; }
+  .voice-agent-header h2 { font-size: 18px; }
+  .voice-orb { width: 88px; height: 88px; }
+  .user-message { margin-left: 5%; }
+  .ai-message { margin-right: 5%; }
+  .summary, .answer, .voice-message { overflow-wrap: anywhere; }
+  table { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+
+@media (max-width: 380px) {
+  main { padding-right: 10px; padding-left: 10px; }
+  .card { padding: 13px; }
+  .analysis .actions > a, .analysis .actions > button { flex-basis: 100%; }
+}
