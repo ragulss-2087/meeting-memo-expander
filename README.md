@@ -1,4 +1,4 @@
-# Meeting Memo Expander — Level 3
+# Meeting Memo Expander 
 
 A general-purpose AI meeting intelligence platform for **every meeting and every industry**. It is not limited to IT, software, or full-stack meetings.
 
