@@ -27,11 +27,17 @@ def _text(value):
     return str(value)
 
 
-def docx_bytes(title, analysis):
+def docx_bytes(meeting, analysis):
     doc = Document()
+    title = meeting.get("title") or "Meeting Memo"
+    transcript = meeting.get("transcript") or ""
 
     # Title
     doc.add_heading(title, level=1)
+
+    # Original meeting data
+    doc.add_heading("Meeting Transcript", level=2)
+    doc.add_paragraph(transcript or "No transcript recorded.")
 
     # Summary
     doc.add_heading("Summary", level=2)
@@ -102,10 +108,13 @@ def docx_bytes(title, analysis):
     return output
 
 
-def pdf_bytes(title, analysis):
+def pdf_bytes(meeting, analysis):
     output = BytesIO()
 
     pdf = canvas.Canvas(output, pagesize=letter)
+
+    title = meeting.get("title") or "Meeting Memo"
+    transcript = meeting.get("transcript") or ""
 
     width, height = letter
 
@@ -156,6 +165,14 @@ def pdf_bytes(title, analysis):
 
     # Title
     write_line(title, size=16, gap=22)
+
+    # Original meeting data
+    write_line("Meeting Transcript", size=13, gap=18)
+    write_line(
+        transcript or "No transcript recorded.",
+        size=10,
+        gap=15
+    )
 
     # Summary
     write_line("Summary", size=13, gap=18)
