@@ -1,11 +1,5 @@
-import hashlib
 import json
 import os
-import secrets
-import smtplib
-import ssl
-import time
-from email.message import EmailMessage
 
 from fastapi import Depends, FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -81,15 +75,6 @@ class ProjectCreate(BaseModel):
 
 class AuthRequest(BaseModel):
     email: str
-    password: str = Field(min_length=8, max_length=128)
-
-
-class ForgotPasswordRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=254)
-
-
-class ResetPasswordRequest(BaseModel):
-    token: str = Field(min_length=20, max_length=200)
     password: str = Field(min_length=8, max_length=128)
 
 
@@ -196,116 +181,6 @@ def login(account: AuthRequest):
         token = new_session(con, row["id"])
 
     return {"access_token": token, "token_type": "bearer", "user": {"id": row["id"], "email": row["email"]}}
-
-
-def send_password_reset_email(recipient: str, reset_url: str):
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
-    smtp_from = os.getenv("SMTP_FROM", "").strip() or os.getenv("SMTP_USER", "").strip()
-    if not smtp_host or not smtp_from:
-        raise RuntimeError("Password reset email is not configured. Set SMTP_HOST and SMTP_FROM.")
-
-    message = EmailMessage()
-    message["Subject"] = "Reset your Meeting Memo Expander password"
-    message["From"] = smtp_from
-    message["To"] = recipient
-    message.set_content(
-        "We received a request to reset your password.\n\n"
-        f"Open this one-time link within 30 minutes: {reset_url}\n\n"
-        "If you did not request this, you can ignore this email."
-    )
-
-    host = smtp_host
-    port = int(os.getenv("SMTP_PORT", "587"))
-    username = os.getenv("SMTP_USER", "").strip()
-    password = os.getenv("SMTP_PASSWORD", "")
-    use_ssl = os.getenv("SMTP_USE_SSL", "false").strip().lower() in {"1", "true", "yes"}
-    use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes"}
-    context = ssl.create_default_context()
-
-    if use_ssl:
-        smtp_connection = smtplib.SMTP_SSL(host, port, timeout=20, context=context)
-    else:
-        smtp_connection = smtplib.SMTP(host, port, timeout=20)
-
-    with smtp_connection as server:
-        if use_tls and not use_ssl:
-            server.starttls(context=context)
-        if username:
-            server.login(username, password)
-        server.send_message(message)
-
-
-@app.post("/api/auth/forgot-password")
-def forgot_password(request: ForgotPasswordRequest):
-    email = request.email.strip().lower()
-    token = None
-    try:
-        with db() as con:
-            row = con.execute(
-                f"SELECT id FROM users WHERE email = {PLACEHOLDER}", (email,)
-            ).fetchone()
-            if row:
-                token = secrets.token_urlsafe(32)
-                token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-                con.execute(
-                    f"DELETE FROM password_reset_tokens WHERE user_id = {PLACEHOLDER}",
-                    (row["id"],),
-                )
-                con.execute(
-                    f"INSERT INTO password_reset_tokens(token_hash, user_id, expires_at) "
-                    f"VALUES ({PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER})",
-                    (token_hash, row["id"], int(time.time()) + 30 * 60),
-                )
-
-        if token:
-            frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
-            send_password_reset_email(email, f"{frontend_url}/?reset_token={token}")
-    except Exception as error:
-        if token:
-            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-            with db() as con:
-                con.execute(
-                    f"DELETE FROM password_reset_tokens WHERE token_hash = {PLACEHOLDER}",
-                    (token_hash,),
-                )
-        raise HTTPException(
-            status_code=503,
-            detail="Could not send the reset email. Check the server email settings and try again.",
-        ) from error
-
-    return {"message": "If an account exists for that email, a password reset link has been sent."}
-
-
-@app.post("/api/auth/reset-password")
-def reset_password(request: ResetPasswordRequest):
-    token_hash = hashlib.sha256(request.token.encode("utf-8")).hexdigest()
-    with db() as con:
-        row = con.execute(
-            f"SELECT user_id FROM password_reset_tokens "
-            f"WHERE token_hash = {PLACEHOLDER} AND expires_at > {PLACEHOLDER}",
-            (token_hash, int(time.time())),
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=400, detail="This reset link is invalid or has expired.")
-
-        consumed = con.execute(
-            f"DELETE FROM password_reset_tokens WHERE token_hash = {PLACEHOLDER}",
-            (token_hash,),
-        )
-        if consumed.rowcount != 1:
-            raise HTTPException(status_code=400, detail="This reset link is invalid or has expired.")
-
-        con.execute(
-            f"UPDATE users SET password_hash = {PLACEHOLDER} WHERE id = {PLACEHOLDER}",
-            (hash_password(request.password), row["user_id"]),
-        )
-        con.execute(f"DELETE FROM sessions WHERE user_id = {PLACEHOLDER}", (row["user_id"],))
-        con.execute(
-            f"DELETE FROM password_reset_tokens WHERE user_id = {PLACEHOLDER}",
-            (row["user_id"],),
-        )
-
-    return {"message": "Password changed. You can now sign in with your new password."}
 
 
 @app.get("/api/auth/me")
