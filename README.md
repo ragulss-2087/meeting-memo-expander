@@ -140,3 +140,8 @@ The live meeting voice agent runs in the browser using Web Speech API recognitio
 This project is ready for final local integration testing, but a public production deployment should additionally use a production database, HTTPS, authentication/authorization, server-side rate limiting, secure secret management, file-size/type validation, and a production ASGI/server configuration.
 
 The repository intentionally does **not** include a real `.env`, API key, `.venv`, or generated local SQLite database.
+
+
+## Password reset email setup
+
+To enable **Forgot password**, configure SMTP in `backend/.env`. For Gmail, use `smtp.gmail.com` on port `587`, enable TLS, and use a Google App Password for `SMTP_PASSWORD` (not your normal account password). Set `SMTP_USER` and `SMTP_FROM` to the sender address. Set `FRONTEND_URL` to `http://localhost:5173` for local use, or to your deployed frontend URL in production. Reset links expire after 30 minutes and can only be used once. Keep mail credentials private and configure production values in the hosting provider's environment settings.

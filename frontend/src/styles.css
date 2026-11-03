@@ -278,3 +278,13 @@ img, svg { max-width: 100%; }
   .auth-card { padding: 24px 20px; }
   .account-controls { justify-content: space-between; width: 100%; }
 }
+
+.auth-notice {
+  padding: 11px 12px;
+  border: 1px solid #b7e2c5;
+  border-radius: 8px;
+  background: #f0fbf3;
+  color: #1d6b38;
+  font-size: 14px;
+  line-height: 1.45;
+}

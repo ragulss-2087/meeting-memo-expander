@@ -27,11 +27,15 @@ def _text(value):
     return str(value)
 
 
-def docx_bytes(title, analysis):
+def docx_bytes(title, analysis, transcript=""):
     doc = Document()
 
     # Title
     doc.add_heading(title, level=1)
+
+    # Transcript
+    doc.add_heading("Transcript", level=2)
+    doc.add_paragraph(_text(transcript) or "No transcript recorded.")
 
     # Summary
     doc.add_heading("Summary", level=2)
@@ -102,7 +106,7 @@ def docx_bytes(title, analysis):
     return output
 
 
-def pdf_bytes(title, analysis):
+def pdf_bytes(title, analysis, transcript=""):
     output = BytesIO()
 
     pdf = canvas.Canvas(output, pagesize=letter)
@@ -156,6 +160,10 @@ def pdf_bytes(title, analysis):
 
     # Title
     write_line(title, size=16, gap=22)
+
+    # Transcript
+    write_line("Transcript", size=13, gap=18)
+    write_line(_text(transcript) or "No transcript recorded.", size=10, gap=15)
 
     # Summary
     write_line("Summary", size=13, gap=18)

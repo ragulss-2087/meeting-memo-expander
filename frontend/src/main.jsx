@@ -61,10 +61,14 @@ function App() {
 
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
-  const [authMode, setAuthMode] = useState("login");
+  const initialResetToken = new URLSearchParams(window.location.search).get("reset_token") || "";
+  const [authMode, setAuthMode] = useState(initialResetToken ? "reset" : "login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [authConfirmPassword, setAuthConfirmPassword] = useState("");
+  const [authResetToken, setAuthResetToken] = useState(initialResetToken);
   const [authError, setAuthError] = useState("");
+  const [authNotice, setAuthNotice] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
 
   // ----------------------------------------------------
@@ -232,6 +236,11 @@ function App() {
 
 
   useEffect(() => {
+    if (initialResetToken) {
+      sessionStorage.removeItem("meeting-memo-token");
+      setAuthReady(true);
+      return;
+    }
     const token = sessionStorage.getItem("meeting-memo-token");
     if (!token) {
       setAuthReady(true);
@@ -251,7 +260,33 @@ function App() {
     event.preventDefault();
     setAuthBusy(true);
     setAuthError("");
+    setAuthNotice("");
     try {
+      if (authMode === "forgot") {
+        const result = await api("/auth/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: authEmail }),
+        });
+        setAuthNotice(result.message);
+        setAuthMode("login");
+        return;
+      }
+      if (authMode === "reset") {
+        if (authPassword !== authConfirmPassword) throw new Error("The passwords do not match.");
+        const result = await api("/auth/reset-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: authResetToken, password: authPassword }),
+        });
+        window.history.replaceState({}, "", window.location.pathname);
+        setAuthResetToken("");
+        setAuthPassword("");
+        setAuthConfirmPassword("");
+        setAuthMode("login");
+        setAuthNotice(result.message);
+        return;
+      }
       const result = await api(`/auth/${authMode === "register" ? "register" : "login"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1333,20 +1368,32 @@ function App() {
       <div className="auth-screen">
         <form className="auth-card" onSubmit={submitAuth}>
           <div className="brand"><Brain /> Memo<span>Agent</span></div>
-          <h1>{authMode === "register" ? "Create your account" : "Welcome back"}</h1>
-          <p>Your meetings and projects are private to your account.</p>
+          <h1>{authMode === "register" ? "Create your account" : authMode === "forgot" ? "Reset your password" : authMode === "reset" ? "Choose a new password" : "Welcome back"}</h1>
+          <p>{authMode === "forgot" ? "Enter your account email and we’ll send you a password reset link." : authMode === "reset" ? "Choose a new password for your account." : "Your meetings and projects are private to your account."}</p>
+          {authNotice && <div className="auth-notice">{authNotice}</div>}
           {authError && <div className="error">{authError}</div>}
-          <label htmlFor="auth-email">Email</label>
-          <input id="auth-email" className="input auth-input" type="email" autoComplete="email" required value={authEmail} onChange={event => setAuthEmail(event.target.value)} />
-          <label htmlFor="auth-password">Password</label>
-          <input id="auth-password" className="input auth-input" type="password" autoComplete={authMode === "register" ? "new-password" : "current-password"} minLength={8} required value={authPassword} onChange={event => setAuthPassword(event.target.value)} />
-          {authMode === "register" && <small className="auth-hint">Use at least 8 characters.</small>}
+          {authMode !== "reset" && <>
+            <label htmlFor="auth-email">Email</label>
+            <input id="auth-email" className="input auth-input" type="email" autoComplete="email" required value={authEmail} onChange={event => setAuthEmail(event.target.value)} />
+          </>}
+          {authMode !== "forgot" && <>
+            <label htmlFor="auth-password">{authMode === "reset" ? "New password" : "Password"}</label>
+            <input id="auth-password" className="input auth-input" type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} minLength={8} required value={authPassword} onChange={event => setAuthPassword(event.target.value)} />
+            {(authMode === "register" || authMode === "reset") && <small className="auth-hint">Use at least 8 characters.</small>}
+            {authMode === "reset" && <>
+              <label htmlFor="auth-confirm-password">Confirm new password</label>
+              <input id="auth-confirm-password" className="input auth-input" type="password" autoComplete="new-password" minLength={8} required value={authConfirmPassword} onChange={event => setAuthConfirmPassword(event.target.value)} />
+            </>}
+          </>}
           <button className="primary auth-submit" type="submit" disabled={authBusy}>
-            {authBusy ? "Please wait…" : authMode === "register" ? "Create account" : "Sign in"}
+            {authBusy ? "Please wait…" : authMode === "register" ? "Create account" : authMode === "forgot" ? "Send reset link" : authMode === "reset" ? "Change password" : "Sign in"}
           </button>
-          <button className="auth-switch" type="button" onClick={() => { setAuthMode(authMode === "register" ? "login" : "register"); setAuthError(""); }}>
+          {authMode === "login" && <button className="auth-switch" type="button" onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthNotice(""); }}>Forgot password?</button>}
+          {authMode === "login" || authMode === "register" ? <button className="auth-switch" type="button" onClick={() => { setAuthMode(authMode === "register" ? "login" : "register"); setAuthError(""); setAuthNotice(""); }}>
             {authMode === "register" ? "Already have an account? Sign in" : "New here? Create an account"}
-          </button>
+          </button> : <button className="auth-switch" type="button" onClick={() => { setAuthMode("login"); setAuthError(""); setAuthNotice(""); }}>
+            Back to sign in
+          </button>}
         </form>
       </div>
     );
