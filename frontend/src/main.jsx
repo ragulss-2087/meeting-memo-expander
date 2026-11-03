@@ -66,7 +66,6 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
-  const [backendWarming, setBackendWarming] = useState(false);
 
   // ----------------------------------------------------
   // PROJECTS
@@ -236,10 +235,6 @@ function App() {
     const token = sessionStorage.getItem("meeting-memo-token");
     if (!token) {
       setAuthReady(true);
-      setBackendWarming(true);
-      fetch(`${API}/health`, { cache: "no-store" })
-        .catch(() => {})
-        .finally(() => setBackendWarming(false));
       return;
     }
     api("/auth/me")
@@ -1340,7 +1335,6 @@ function App() {
           <div className="brand"><Brain /> Memo<span>Agent</span></div>
           <h1>{authMode === "register" ? "Create your account" : "Welcome back"}</h1>
           <p>Your meetings and projects are private to your account.</p>
-          {backendWarming && <small className="auth-hint">Connecting to the server…</small>}
           {authError && <div className="error">{authError}</div>}
           <label htmlFor="auth-email">Email</label>
           <input id="auth-email" className="input auth-input" type="email" autoComplete="email" required value={authEmail} onChange={event => setAuthEmail(event.target.value)} />
