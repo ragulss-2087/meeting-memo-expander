@@ -16,7 +16,9 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-const API = "https://meeting-memo-backend.onrender.com/api";
+const API =
+  import.meta.env.VITE_API_URL ||
+  "https://meeting-memo-backend.onrender.com/api";
 
 
 // ======================================================
