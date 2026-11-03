@@ -46,6 +46,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "https://meeting-memo-expander.vercel.app",
+        "https://meeting-memo-web.onrender.com",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=False,
@@ -1079,3 +1080,4 @@ def export_pdf(meeting_id: int, user: dict = Depends(get_current_user)):
             )
         }
     )
+
