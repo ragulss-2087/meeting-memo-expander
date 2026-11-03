@@ -39,6 +39,13 @@ def docx_bytes(title, analysis):
         _text(analysis.get("summary", ""))
     )
 
+    # Discussion points
+    discussion_points = analysis.get("discussion_points", [])
+    if discussion_points:
+        doc.add_heading("Discussion Points", level=2)
+        for point in discussion_points:
+            doc.add_paragraph(_text(point), style="List Bullet")
+
     # Decisions
     doc.add_heading("Decisions", level=2)
 
@@ -165,6 +172,13 @@ def pdf_bytes(title, analysis):
         gap=15
     )
 
+    # Discussion points
+    discussion_points = analysis.get("discussion_points", [])
+    if discussion_points:
+        write_line("Discussion Points", size=13, gap=18)
+        for point in discussion_points:
+            write_line("- " + _text(point), size=10, gap=15)
+
     # Decisions
     write_line("Decisions", size=13, gap=18)
 
@@ -173,7 +187,7 @@ def pdf_bytes(title, analysis):
     if decisions:
         for decision in decisions:
             write_line(
-                "• " + _text(decision),
+                "- " + _text(decision),
                 size=10,
                 gap=15
             )
@@ -188,7 +202,7 @@ def pdf_bytes(title, analysis):
     if action_items:
         for item in action_items:
             write_line(
-                "• " + _text(item),
+                "- " + _text(item),
                 size=10,
                 gap=15
             )
@@ -203,7 +217,7 @@ def pdf_bytes(title, analysis):
     if risks:
         for risk in risks:
             write_line(
-                "• " + _text(risk),
+                "- " + _text(risk),
                 size=10,
                 gap=15
             )
@@ -218,7 +232,7 @@ def pdf_bytes(title, analysis):
     if questions:
         for question in questions:
             write_line(
-                "• " + _text(question),
+                "- " + _text(question),
                 size=10,
                 gap=15
             )

@@ -1005,12 +1005,12 @@ def export_docx(meeting_id: int, user: dict = Depends(get_current_user)):
         analysis = {}
 
     data = docx_bytes(
-        meeting,
+        meeting["title"],
         analysis
     )
 
     return StreamingResponse(
-        iter([data]),
+        iter([data.getvalue()]),
         media_type=(
             "application/vnd.openxmlformats-officedocument."
             "wordprocessingml.document"
@@ -1067,12 +1067,12 @@ def export_pdf(meeting_id: int, user: dict = Depends(get_current_user)):
         analysis = {}
 
     data = pdf_bytes(
-        meeting,
+        meeting["title"],
         analysis
     )
 
     return StreamingResponse(
-        iter([data]),
+        iter([data.getvalue()]),
         media_type="application/pdf",
         headers={
             "Content-Disposition": (
@@ -1080,4 +1080,3 @@ def export_pdf(meeting_id: int, user: dict = Depends(get_current_user)):
             )
         }
     )
-
