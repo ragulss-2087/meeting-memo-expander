@@ -673,11 +673,12 @@ async def transcribe_audio(
 
         text = await transcribe(
             audio_bytes,
-            file.filename or "audio.webm",
-            file.content_type or "application/octet-stream",
+            file.filename or "audio.webm"
         )
 
-        return {"text": text}
+        return {
+            "transcript": text
+        }
 
     except Exception as e:
 
@@ -1003,13 +1004,12 @@ def export_docx(meeting_id: int, user: dict = Depends(get_current_user)):
         analysis = {}
 
     data = docx_bytes(
-        meeting["title"],
-        analysis,
-        meeting.get("transcript", ""),
+        meeting,
+        analysis
     )
 
     return StreamingResponse(
-        iter([data.getvalue()]),
+        iter([data]),
         media_type=(
             "application/vnd.openxmlformats-officedocument."
             "wordprocessingml.document"
@@ -1066,13 +1066,12 @@ def export_pdf(meeting_id: int, user: dict = Depends(get_current_user)):
         analysis = {}
 
     data = pdf_bytes(
-        meeting["title"],
-        analysis,
-        meeting.get("transcript", ""),
+        meeting,
+        analysis
     )
 
     return StreamingResponse(
-        iter([data.getvalue()]),
+        iter([data]),
         media_type="application/pdf",
         headers={
             "Content-Disposition": (
