@@ -1,12 +1,13 @@
 import json
 import os
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import Depends, FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .db import db, init_db, seed
+from .db import db, init_db
+from .security import get_current_user, hash_password, new_session, verify_password
 from .llm import analyze, answer_question
 from .stt import transcribe
 from .exporter import docx_bytes, pdf_bytes
@@ -61,7 +62,6 @@ app.add_middleware(
 def startup():
 
     init_db()
-    seed()
 
 
 # =========================================================
@@ -71,6 +71,11 @@ def startup():
 class ProjectCreate(BaseModel):
     name: str
     description: str = ""
+
+
+class AuthRequest(BaseModel):
+    email: str
+    password: str = Field(min_length=8, max_length=128)
 
 
 class MeetingCreate(BaseModel):
@@ -88,6 +93,31 @@ class AskRequest(BaseModel):
     history: list = []
 
 
+def require_owned_project(con, project_id: int, user_id: int):
+    row = con.execute(
+        f"SELECT id FROM projects WHERE id = {PLACEHOLDER} AND owner_id = {PLACEHOLDER}",
+        (project_id, user_id),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return row
+
+
+def require_owned_meeting(con, meeting_id: int, user_id: int):
+    row = con.execute(
+        f"""
+        SELECT meetings.id
+        FROM meetings
+        JOIN projects ON projects.id = meetings.project_id
+        WHERE meetings.id = {PLACEHOLDER} AND projects.owner_id = {PLACEHOLDER}
+        """,
+        (meeting_id, user_id),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return row
+
+
 # =========================================================
 # HEALTH
 # =========================================================
@@ -101,32 +131,101 @@ def health():
     }
 
 
+@app.post("/api/auth/register")
+def register(account: AuthRequest):
+    email = account.email.strip().lower()
+    if len(email) > 254 or email.count("@") != 1 or "." not in email.rsplit("@", 1)[-1]:
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+
+    placeholder = PLACEHOLDER
+    with db() as con:
+        existing = con.execute(
+            f"SELECT id FROM users WHERE email = {placeholder}", (email,)
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="An account with this email already exists.")
+
+        if DATABASE_URL:
+            user = con.execute(
+                f"INSERT INTO users(email, password_hash) VALUES ({placeholder}, {placeholder}) RETURNING id, email",
+                (email, hash_password(account.password)),
+            ).fetchone()
+            user_id = user["id"]
+        else:
+            cursor = con.execute(
+                f"INSERT INTO users(email, password_hash) VALUES ({placeholder}, {placeholder})",
+                (email, hash_password(account.password)),
+            )
+            user_id = cursor.lastrowid
+
+        # Give every new account a private project so the dashboard is ready to use.
+        con.execute(
+            f"INSERT INTO projects(owner_id, name, description) VALUES ({placeholder}, {placeholder}, {placeholder})",
+            (user_id, "My Project", "Your private meeting workspace"),
+        )
+        token = new_session(con, user_id)
+
+    return {"access_token": token, "token_type": "bearer", "user": {"id": user_id, "email": email}}
+
+
+@app.post("/api/auth/login")
+def login(account: AuthRequest):
+    email = account.email.strip().lower()
+    with db() as con:
+        row = con.execute(
+            f"SELECT id, email, password_hash FROM users WHERE email = {PLACEHOLDER}",
+            (email,),
+        ).fetchone()
+        if not row or not verify_password(account.password, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Email or password is incorrect.")
+        token = new_session(con, row["id"])
+
+    return {"access_token": token, "token_type": "bearer", "user": {"id": row["id"], "email": row["email"]}}
+
+
+@app.get("/api/auth/me")
+def who_am_i(user: dict = Depends(get_current_user)):
+    return {"id": user["id"], "email": user["email"]}
+
+
+@app.post("/api/auth/logout")
+def logout(user: dict = Depends(get_current_user)):
+    with db() as con:
+        con.execute(
+            f"DELETE FROM sessions WHERE token_hash = {PLACEHOLDER}",
+            (user["token_hash"],),
+        )
+    return {"message": "Signed out."}
+
+
 # =========================================================
 # PROJECTS
 # =========================================================
 
 @app.get("/api/projects")
-def get_projects():
+def get_projects(user: dict = Depends(get_current_user)):
 
     with db() as con:
 
         rows = con.execute(
-            """
+            f"""
             SELECT
                 id,
                 name,
                 description,
                 created_at
             FROM projects
+            WHERE owner_id = {PLACEHOLDER}
             ORDER BY id
-            """
+            """,
+            (user["id"],),
         ).fetchall()
 
         return [dict(row) for row in rows]
 
 
 @app.post("/api/projects")
-def create_project(project: ProjectCreate):
+def create_project(project: ProjectCreate, user: dict = Depends(get_current_user)):
 
     with db() as con:
 
@@ -135,13 +234,15 @@ def create_project(project: ProjectCreate):
             row = con.execute(
                 f"""
                 INSERT INTO projects(
+                    owner_id,
                     name,
                     description
                 )
-                VALUES ({PLACEHOLDER}, {PLACEHOLDER})
+                VALUES ({PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER})
                 RETURNING id
                 """,
                 (
+                    user["id"],
                     project.name,
                     project.description
                 )
@@ -154,12 +255,14 @@ def create_project(project: ProjectCreate):
             cursor = con.execute(
                 f"""
                 INSERT INTO projects(
+                    owner_id,
                     name,
                     description
                 )
-                VALUES ({PLACEHOLDER}, {PLACEHOLDER})
+                VALUES ({PLACEHOLDER}, {PLACEHOLDER}, {PLACEHOLDER})
                 """,
                 (
+                    user["id"],
                     project.name,
                     project.description
                 )
@@ -179,24 +282,26 @@ def create_project(project: ProjectCreate):
 # =========================================================
 
 @app.get("/api/meetings")
-def get_meetings(project_id: int):
+def get_meetings(project_id: int, user: dict = Depends(get_current_user)):
 
     with db() as con:
 
         rows = con.execute(
             f"""
             SELECT
-                id,
-                project_id,
-                title,
-                transcript,
-                analysis_json,
-                created_at
+                meetings.id,
+                meetings.project_id,
+                meetings.title,
+                meetings.transcript,
+                meetings.analysis_json,
+                meetings.created_at
             FROM meetings
-            WHERE project_id = {PLACEHOLDER}
-            ORDER BY id DESC
+            JOIN projects ON projects.id = meetings.project_id
+            WHERE meetings.project_id = {PLACEHOLDER}
+              AND projects.owner_id = {PLACEHOLDER}
+            ORDER BY meetings.id DESC
             """,
-            (project_id,)
+            (project_id, user["id"])
         ).fetchall()
 
         result = []
@@ -218,23 +323,25 @@ def get_meetings(project_id: int):
 
 
 @app.get("/api/meetings/{meeting_id}")
-def get_meeting(meeting_id: int):
+def get_meeting(meeting_id: int, user: dict = Depends(get_current_user)):
 
     with db() as con:
 
         row = con.execute(
             f"""
             SELECT
-                id,
-                project_id,
-                title,
-                transcript,
-                analysis_json,
-                created_at
+                meetings.id,
+                meetings.project_id,
+                meetings.title,
+                meetings.transcript,
+                meetings.analysis_json,
+                meetings.created_at
             FROM meetings
-            WHERE id = {PLACEHOLDER}
+            JOIN projects ON projects.id = meetings.project_id
+            WHERE meetings.id = {PLACEHOLDER}
+              AND projects.owner_id = {PLACEHOLDER}
             """,
-            (meeting_id,)
+            (meeting_id, user["id"])
         ).fetchone()
 
         if not row:
@@ -256,7 +363,10 @@ def get_meeting(meeting_id: int):
 
 
 @app.post("/api/meetings")
-async def create_meeting(meeting: MeetingCreate):
+async def create_meeting(meeting: MeetingCreate, user: dict = Depends(get_current_user)):
+
+    with db() as con:
+        require_owned_project(con, meeting.project_id, user["id"])
 
     transcript = meeting.transcript or ""
 
@@ -489,17 +599,19 @@ async def create_meeting(meeting: MeetingCreate):
 # =========================================================
 
 @app.delete("/api/meetings/{meeting_id}")
-def delete_meeting(meeting_id: int):
+def delete_meeting(meeting_id: int, user: dict = Depends(get_current_user)):
 
     with db() as con:
 
         meeting = con.execute(
             f"""
-            SELECT id
+            SELECT meetings.id
             FROM meetings
-            WHERE id = {PLACEHOLDER}
+            JOIN projects ON projects.id = meetings.project_id
+            WHERE meetings.id = {PLACEHOLDER}
+              AND projects.owner_id = {PLACEHOLDER}
             """,
-            (meeting_id,)
+            (meeting_id, user["id"])
         ).fetchone()
 
         if not meeting:
@@ -544,7 +656,8 @@ def delete_meeting(meeting_id: int):
 
 @app.post("/api/transcribe")
 async def transcribe_audio(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
 ):
 
     audio_bytes = await file.read()
@@ -585,9 +698,11 @@ async def transcribe_audio(
 # =========================================================
 
 @app.get("/api/meetings/{meeting_id}/tasks")
-def get_tasks(meeting_id: int):
+def get_tasks(meeting_id: int, user: dict = Depends(get_current_user)):
 
     with db() as con:
+
+        require_owned_meeting(con, meeting_id, user["id"])
 
         rows = con.execute(
             f"""
@@ -611,18 +726,22 @@ def get_tasks(meeting_id: int):
 @app.patch("/api/tasks/{task_id}")
 def update_task(
     task_id: int,
-    task: TaskUpdate
+    task: TaskUpdate,
+    user: dict = Depends(get_current_user),
 ):
 
     with db() as con:
 
         existing = con.execute(
             f"""
-            SELECT id
+            SELECT tasks.id
             FROM tasks
-            WHERE id = {PLACEHOLDER}
+            JOIN meetings ON meetings.id = tasks.meeting_id
+            JOIN projects ON projects.id = meetings.project_id
+            WHERE tasks.id = {PLACEHOLDER}
+              AND projects.owner_id = {PLACEHOLDER}
             """,
-            (task_id,)
+            (task_id, user["id"])
         ).fetchone()
 
         if not existing:
@@ -656,9 +775,11 @@ def update_task(
 # =========================================================
 
 @app.get("/api/meetings/{meeting_id}/decisions")
-def get_decisions(meeting_id: int):
+def get_decisions(meeting_id: int, user: dict = Depends(get_current_user)):
 
     with db() as con:
+
+        require_owned_meeting(con, meeting_id, user["id"])
 
         rows = con.execute(
             f"""
@@ -684,7 +805,8 @@ def get_decisions(meeting_id: int):
 @app.get("/api/search")
 def search(
     q: str,
-    project_id: int | None = None
+    project_id: int | None = None,
+    user: dict = Depends(get_current_user),
 ):
 
     search_text = f"%{q}%"
@@ -696,22 +818,25 @@ def search(
             rows = con.execute(
                 f"""
                 SELECT
-                    id,
-                    project_id,
-                    title,
-                    transcript,
-                    analysis_json,
-                    created_at
+                meetings.id,
+                meetings.project_id,
+                meetings.title,
+                meetings.transcript,
+                meetings.analysis_json,
+                meetings.created_at
                 FROM meetings
-                WHERE project_id = {PLACEHOLDER}
+                JOIN projects ON projects.id = meetings.project_id
+                WHERE meetings.project_id = {PLACEHOLDER}
+                AND projects.owner_id = {PLACEHOLDER}
                 AND (
-                    title LIKE {PLACEHOLDER}
-                    OR transcript LIKE {PLACEHOLDER}
+                    meetings.title LIKE {PLACEHOLDER}
+                    OR meetings.transcript LIKE {PLACEHOLDER}
                 )
-                ORDER BY id DESC
+                ORDER BY meetings.id DESC
                 """,
                 (
                     project_id,
+                    user["id"],
                     search_text,
                     search_text
                 )
@@ -722,20 +847,23 @@ def search(
             rows = con.execute(
                 f"""
                 SELECT
-                    id,
-                    project_id,
-                    title,
-                    transcript,
-                    analysis_json,
-                    created_at
+                    meetings.id,
+                    meetings.project_id,
+                    meetings.title,
+                    meetings.transcript,
+                    meetings.analysis_json,
+                    meetings.created_at
                 FROM meetings
-                WHERE (
-                    title LIKE {PLACEHOLDER}
-                    OR transcript LIKE {PLACEHOLDER}
+                JOIN projects ON projects.id = meetings.project_id
+                WHERE projects.owner_id = {PLACEHOLDER}
+                AND (
+                    meetings.title LIKE {PLACEHOLDER}
+                    OR meetings.transcript LIKE {PLACEHOLDER}
                 )
-                ORDER BY id DESC
+                ORDER BY meetings.id DESC
                 """,
                 (
+                    user["id"],
                     search_text,
                     search_text
                 )
@@ -766,7 +894,8 @@ def search(
 @app.post("/api/meetings/{meeting_id}/ask")
 async def ask_meeting_question(
     meeting_id: int,
-    x: AskRequest
+    x: AskRequest,
+    user: dict = Depends(get_current_user),
 ):
 
     with db() as con:
@@ -774,14 +903,16 @@ async def ask_meeting_question(
         row = con.execute(
             f"""
             SELECT
-                id,
+                meetings.id,
                 title,
                 transcript,
                 analysis_json
             FROM meetings
-            WHERE id = {PLACEHOLDER}
+            JOIN projects ON projects.id = meetings.project_id
+            WHERE meetings.id = {PLACEHOLDER}
+              AND projects.owner_id = {PLACEHOLDER}
             """,
-            (meeting_id,)
+            (meeting_id, user["id"])
         ).fetchone()
 
         if not row:
@@ -834,21 +965,23 @@ async def ask_meeting_question(
 # =========================================================
 
 @app.get("/api/meetings/{meeting_id}/export/docx")
-def export_docx(meeting_id: int):
+def export_docx(meeting_id: int, user: dict = Depends(get_current_user)):
 
     with db() as con:
 
         row = con.execute(
             f"""
             SELECT
-                id,
+                meetings.id,
                 title,
                 transcript,
                 analysis_json
             FROM meetings
-            WHERE id = {PLACEHOLDER}
+            JOIN projects ON projects.id = meetings.project_id
+            WHERE meetings.id = {PLACEHOLDER}
+              AND projects.owner_id = {PLACEHOLDER}
             """,
-            (meeting_id,)
+            (meeting_id, user["id"])
         ).fetchone()
 
         if not row:
@@ -894,21 +1027,23 @@ def export_docx(meeting_id: int):
 # =========================================================
 
 @app.get("/api/meetings/{meeting_id}/export/pdf")
-def export_pdf(meeting_id: int):
+def export_pdf(meeting_id: int, user: dict = Depends(get_current_user)):
 
     with db() as con:
 
         row = con.execute(
             f"""
             SELECT
-                id,
+                meetings.id,
                 title,
                 transcript,
                 analysis_json
             FROM meetings
-            WHERE id = {PLACEHOLDER}
+            JOIN projects ON projects.id = meetings.project_id
+            WHERE meetings.id = {PLACEHOLDER}
+              AND projects.owner_id = {PLACEHOLDER}
             """,
-            (meeting_id,)
+            (meeting_id, user["id"])
         ).fetchone()
 
         if not row:
