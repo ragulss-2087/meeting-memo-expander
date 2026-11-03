@@ -517,9 +517,11 @@ function App() {
           }
         );
 
-      setTranscript(
-        data.text || ""
-      );
+      const recognizedText = data.transcript || "";
+      if (!recognizedText.trim()) {
+        throw new Error("No speech could be recognized in this audio file.");
+      }
+      setTranscript(recognizedText);
 
     } catch (e) {
 

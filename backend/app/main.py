@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from .db import db, init_db
 from .security import get_current_user, hash_password, new_session, verify_password
 from .llm import analyze, answer_question
-from .stt import transcribe
+from .stt import MAX_INLINE_AUDIO_BYTES, transcribe
 from .exporter import docx_bytes, pdf_bytes
 
 
@@ -670,16 +670,23 @@ async def transcribe_audio(
             detail="Empty audio file"
         )
 
+    if len(audio_bytes) > MAX_INLINE_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio files must be 15 MB or smaller.")
+
     try:
 
         text = await transcribe(
             audio_bytes,
-            file.filename or "audio.webm"
+            file.filename or "audio.webm",
+            file.content_type
         )
 
         return {
             "transcript": text
         }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
 
